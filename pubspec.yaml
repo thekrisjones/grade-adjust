@@ -1,0 +1,30 @@
+name: your_project_name
+description: A new Flutter project.
+
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  gpx: ^2.2.1
+  file_picker: ^5.0.0
+  path: ^1.8.0
+  flutter_map: ^6.1.0  # For displaying maps
+  latlong2: ^0.9.0     # For handling coordinates
+  fl_chart: ^0.66.0    # For elevation graphs
+  xml: ^6.5.0          # For parsing GPX files
+  
+  # Add other dependencies here
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true 
