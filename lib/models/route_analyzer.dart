@@ -1,5 +1,4 @@
 import 'package:gpx/gpx.dart';
-import 'checkpoint_prediction.dart';
 
 class RouteAnalyzer {
   final List<Wpt> points;
@@ -16,10 +15,6 @@ class RouteAnalyzer {
     return gradeModel.adjustPace(baselinePace, grade);
   }
 
-  List<CheckpointPrediction> predictCheckpointTimes(double baselinePace) {
-    // TODO: Implement checkpoint predictions
-    return [];
-  }
 }
 
 enum PathType {
