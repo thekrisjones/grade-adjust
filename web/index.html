@@ -18,7 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="A Flutter app for route analysis with grade-adjusted pace calculations.">
 
   <!-- iOS meta tags & icons -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -29,8 +29,27 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>grade_adjust</title>
+  <title>Grade Adjust - Route Analyzer</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Fix for GitHub Pages base path issues -->
+  <script>
+    // Dynamically set the base href if it's not already set by Flutter build
+    (function() {
+      var base = document.querySelector('base');
+      if (base.getAttribute('href') === '$FLUTTER_BASE_HREF') {
+        // If we're on GitHub Pages
+        if (window.location.hostname.endsWith('github.io')) {
+          // Extract the repository name from the pathname
+          var pathSegments = window.location.pathname.split('/');
+          if (pathSegments.length > 1) {
+            var repoName = pathSegments[1];
+            base.setAttribute('href', '/' + repoName + '/');
+          }
+        }
+      }
+    })();
+  </script>
 
   <script>
     // The value below is injected by flutter build, do not touch.

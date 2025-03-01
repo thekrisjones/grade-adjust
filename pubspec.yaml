@@ -1,5 +1,5 @@
-name: your_project_name
-description: A new Flutter project.
+name: grade_adjust
+description: A Flutter app for route analysis with grade-adjusted pace calculations.
 
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
@@ -19,6 +19,8 @@ dependencies:
   fl_chart: ^0.66.0    # For elevation graphs
   xml: ^6.5.0          # For parsing GPX files
   flutter_map_cancellable_tile_provider: ^2.0.0
+  flutter_web_plugins:
+    sdk: flutter
   
   # Add other dependencies here
 
