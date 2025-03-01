@@ -6,7 +6,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:math' show sin, cos, sqrt, atan2, max, min, pow, exp, pi, Point;
 import 'dart:async'; // Add timer import for debounce
-import '../models/route_analyzer.dart';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 
 class RouteAnalyzerScreen extends StatefulWidget {
@@ -18,10 +17,11 @@ class RouteAnalyzerScreen extends StatefulWidget {
 
 class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   Gpx? gpxData;
-  RouteAnalyzer? analyzer;
   List<LatLng> routePoints = [];
   List<FlSpot> elevationPoints = [];
   List<FlSpot> timePoints = []; // Points for time graph
+  List<double> cumulativeElevationGain = []; // Track cumulative elevation gain at each point
+  List<double> cumulativeElevationLoss = []; // Track cumulative elevation loss at each point
   double? maxElevation;
   double? minElevation;
   double cumulativeDistance = 0.0;
@@ -145,6 +145,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       timePoints = [];
       smoothedGradients = [];
       cumulativeDistance = 0.0;
+      cumulativeElevationGain = [];
+      cumulativeElevationLoss = [];
       maxElevation = null;
       minElevation = null;
       hoveredPointIndex = null;
@@ -159,14 +161,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       // Process first elevation point
       if (points.isNotEmpty && points[0].ele != null) {
         elevationPoints.add(FlSpot(0, points[0].ele!));
+        cumulativeElevationGain.add(0);
+        cumulativeElevationLoss.add(0);
       }
 
       // Process remaining points and calculate average point spacing
       double totalDistance = 0;
       int pointCount = 0;
+      double totalElevationGain = 0;
+      double totalElevationLoss = 0;
       
       for (int i = 1; i < points.length; i++) {
-        if (points[i].ele == null) continue;
+        if (points[i].ele == null || points[i-1].ele == null) continue;
 
         // Calculate distance between current point and previous point
         double distanceInMeters = calculateDistance(
@@ -181,8 +187,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         
         cumulativeDistance += distanceInMeters / 1000.0; // Convert to kilometers
         
+        // Calculate elevation change
+        double elevationChange = points[i].ele! - points[i-1].ele!;
+        if (elevationChange > 0) {
+          totalElevationGain += elevationChange;
+        } else {
+          totalElevationLoss += -elevationChange;
+        }
+        
         // Add point with cumulative distance and elevation
         elevationPoints.add(FlSpot(cumulativeDistance, points[i].ele!));
+        cumulativeElevationGain.add(totalElevationGain);
+        cumulativeElevationLoss.add(totalElevationLoss);
       }
 
       // Calculate average point spacing in meters
@@ -216,8 +232,52 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     });
   }
 
-  int findClosestPointIndex(double targetDistance) {
-    return elevationPoints.indexWhere((point) => point.x >= targetDistance);
+  int findClosestRoutePoint(Offset localPosition, BoxConstraints constraints) {
+    if (routePoints.isEmpty) return -1;
+    
+    // Convert screen coordinates to lat/lng
+    final point = mapController.camera.pointToLatLng(Point(localPosition.dx, localPosition.dy));
+    
+    // Find closest point on route using a more efficient approach
+    double minDistance = double.infinity;
+    int closestIndex = -1;
+    
+    // Use a step size to check fewer points for better performance
+    // For very large routes, check every Nth point first, then refine
+    int stepSize = routePoints.length > 1000 ? 10 : 1;
+    
+    // First pass with step size
+    for (int i = 0; i < routePoints.length; i += stepSize) {
+      final routePoint = routePoints[i];
+      final distance = (point.latitude - routePoint.latitude) * (point.latitude - routePoint.latitude) +
+                      (point.longitude - routePoint.longitude) * (point.longitude - routePoint.longitude);
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+    
+    // Second pass to refine if we used a step size
+    if (stepSize > 1 && closestIndex >= 0) {
+      int start = max(0, closestIndex - stepSize);
+      int end = min(routePoints.length - 1, closestIndex + stepSize);
+      
+      for (int i = start; i <= end; i++) {
+        if (i % stepSize == 0) continue; // Skip points we already checked
+        
+        final routePoint = routePoints[i];
+        final distance = (point.latitude - routePoint.latitude) * (point.latitude - routePoint.latitude) +
+                        (point.longitude - routePoint.longitude) * (point.longitude - routePoint.longitude);
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestIndex = i;
+        }
+      }
+    }
+    
+    return closestIndex;
   }
 
   Color getGradientColor(double gradient) {
@@ -314,102 +374,41 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     return smoothed;
   }
 
-  int findClosestRoutePoint(Offset localPosition, BoxConstraints constraints) {
-    // Convert screen coordinates to lat/lng
-    final point = mapController.camera.pointToLatLng(Point(localPosition.dx, localPosition.dy));
-    
-    // Find closest point on route
-    double minDistance = double.infinity;
-    int closestIndex = -1;
-    
-    for (int i = 0; i < routePoints.length; i++) {
-      final routePoint = routePoints[i];
-      final distance = (point.latitude - routePoint.latitude) * (point.latitude - routePoint.latitude) +
-                      (point.longitude - routePoint.longitude) * (point.longitude - routePoint.longitude);
-      
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestIndex = i;
-      }
-    }
-    
-    return closestIndex;
-  }
-
-  // Add this method to find the closest elevation point to a given distance
-  FlSpot findClosestElevationPoint(double distance) {
-    if (elevationPoints.isEmpty) return const FlSpot(0, 0);
-    
-    // Find the closest point by distance
-    FlSpot closest = elevationPoints.first;
-    double minDist = double.infinity;
-    int closestIndex = 0;
-    
-    for (int i = 0; i < elevationPoints.length; i++) {
-      var point = elevationPoints[i];
-      double dist = (point.x - distance).abs();
-      if (dist < minDist) {
-        minDist = dist;
-        closest = point;
-        closestIndex = i;
-      }
-    }
-    
-    // Store the index of the closest point for tooltip display
-    _closestElevationPointIndex = closestIndex;
-    
-    // Return a spot with the exact x-coordinate from the hover position
-    // but the y-coordinate from the closest data point
-    // This ensures the vertical line aligns perfectly with the mouse
-    return FlSpot(distance, closest.y);
-  }
-
-  // Add a field to track the index of the closest elevation point
-  int _closestElevationPointIndex = 0;
-  
-  // Add this method to update the map marker with a shorter debounce
+  // Optimize the map marker update method
   void _updateMapMarker(int? pointIndex) {
+    // Skip update if the point hasn't changed
+    if (pointIndex == hoveredPointIndex) return;
+    
     // Cancel previous timer if it exists
     _mapDebounceTimer?.cancel();
     
-    // Use a much shorter debounce time for the map marker to reduce delay
-    // but still prevent flickering during rapid mouse movement
-    _mapDebounceTimer = Timer(const Duration(milliseconds: 10), () {
-      if (mounted) {
-        setState(() {
-          hoveredPointIndex = pointIndex;
-        });
-      }
-    });
+    // Update immediately without debounce for better responsiveness
+    if (mounted) {
+      setState(() {
+        hoveredPointIndex = pointIndex;
+      });
+    }
   }
 
-  // Modify this method to only update the chart-related state with no debounce
+  // Optimize the hover point update method
   void _updateHoveredPoint(int? pointIndex, double? distance) {
+    // Skip update if the distance hasn't changed
+    if (distance == hoveredDistance) return;
+    
     // Cancel previous timer if it exists
     _chartDebounceTimer?.cancel();
     
-    // When hovering over the map, we want to update the chart marker immediately
+    // When hovering over the map or chart, update immediately without debounce
     if (distance != null) {
-      // For map hover, update immediately without debounce
       setState(() {
         hoveredDistance = distance;
         hoveredSpot = findClosestElevationPoint(distance);
-        
-        // Make sure we have a valid index for the tooltip
-        if (_closestElevationPointIndex >= 0 && _closestElevationPointIndex < elevationPoints.length) {
-          // This will force the chart to rebuild with the tooltip visible
-          // The tooltip will appear at the position determined by hoveredSpot and _closestElevationPointIndex
-        }
       });
     } else {
-      // For chart exit events, use a very short debounce
-      _chartDebounceTimer = Timer(const Duration(milliseconds: 10), () {
-        if (mounted) {
-          setState(() {
-            hoveredDistance = null;
-            hoveredSpot = null;
-          });
-        }
+      // For exit events, update immediately
+      setState(() {
+        hoveredDistance = null;
+        hoveredSpot = null;
       });
     }
   }
@@ -478,19 +477,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       builder: (context, constraints) {
                         return MouseRegion(
                           onHover: (event) {
+                            // Throttle hover events for better performance
+                            if (_mapDebounceTimer?.isActive ?? false) return;
+                            
                             final RenderBox box = context.findRenderObject() as RenderBox;
                             final localPosition = box.globalToLocal(event.position);
                             
                             final closestIndex = findClosestRoutePoint(localPosition, constraints);
-                            if (closestIndex >= 0 && closestIndex < elevationPoints.length) {
-                              // Update both markers but with different debounce times
+                            if (closestIndex >= 0 && closestIndex < routePoints.length) {
+                              // Update the map marker
                               _updateMapMarker(closestIndex);
                               
-                              // Get the distance value for this point
-                              final distance = elevationPoints[closestIndex].x;
+                              // Map the route point index to an elevation point index
+                              int elevationIndex;
                               
-                              // Update the chart marker with the distance
-                              _updateHoveredPoint(closestIndex, distance);
+                              // If the arrays have the same length, use direct mapping
+                              if (routePoints.length == elevationPoints.length) {
+                                elevationIndex = closestIndex;
+                              } else {
+                                // Otherwise, use proportional mapping
+                                double ratio = elevationPoints.length / routePoints.length;
+                                elevationIndex = (closestIndex * ratio).round();
+                                elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
+                              }
+                              
+                              // If we found a valid elevation point, update the chart
+                              if (elevationIndex >= 0 && elevationIndex < elevationPoints.length) {
+                                double distance = elevationPoints[elevationIndex].x;
+                                _updateHoveredPoint(elevationIndex, distance);
+                              }
+                              
+                              // Set a very short throttle to prevent too many updates
+                              _mapDebounceTimer = Timer(const Duration(milliseconds: 5), () {});
                             }
                           },
                           onExit: (_) {
@@ -548,6 +566,157 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   ],
                 ),
               ),
+              
+              // Information panel between map and elevation chart
+              if (routePoints.isNotEmpty && hoveredSpot != null && _closestElevationPointIndex >= 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+                  margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8.0),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Use a responsive layout based on available width
+                      final isWide = constraints.maxWidth > 600;
+                      
+                      // Create info items
+                      final infoItems = [
+                        // Distance information
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Distance',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              '${hoveredSpot!.x.toStringAsFixed(2)} km',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        // Elevation information
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Elevation',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              '${hoveredSpot!.y.toStringAsFixed(0)} m',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        // Elevation gain information
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Elevation Gain',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              '${cumulativeElevationGain[_closestElevationPointIndex].toStringAsFixed(0)} m',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        // Elevation loss information
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Elevation Loss',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              '${cumulativeElevationLoss[_closestElevationPointIndex].toStringAsFixed(0)} m',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        // Time information
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Estimated Time',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            Text(
+                              _getTimeAtDistance(hoveredSpot!.x),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ];
+                      
+                      // Return appropriate layout based on screen width
+                      return isWide
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: infoItems,
+                          )
+                        : Wrap(
+                            spacing: 20,
+                            runSpacing: 12,
+                            children: infoItems,
+                          );
+                    },
+                  ),
+                ),
               
               // Elevation chart
               Container(
@@ -700,40 +869,46 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         maxX: elevationPoints.last.x,
                         lineTouchData: LineTouchData(
                           enabled: true,
-                          // Always show tooltip when hoveredSpot is not null (from map or chart)
+                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
+                            // Skip processing if there's no touch response or no spots
+                            if (touchResponse?.lineBarSpots == null || 
+                                touchResponse!.lineBarSpots!.isEmpty) {
+                              if (event is FlPointerExitEvent) {
+                                _updateHoveredPoint(null, null);
+                                _updateMapMarker(null);
+                              }
+                              return;
+                            }
+                            
+                            // Handle touch/hover events directly from the chart
+                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent) {
+                              // Get the touched spot directly from the chart's touch response
+                              final touchedBarSpot = touchResponse.lineBarSpots![0];
+                              
+                              // Skip if the spot index is out of bounds
+                              if (touchedBarSpot.spotIndex >= elevationPoints.length) return;
+                              
+                              // Get the actual elevation point
+                              final touchedSpot = elevationPoints[touchedBarSpot.spotIndex];
+                              
+                              // Find the corresponding route point index
+                              int routePointIndex = _findRoutePointIndexForDistance(touchedSpot.x);
+                              
+                              // Update both the chart and map markers
+                              _updateHoveredPoint(touchedBarSpot.spotIndex, touchedSpot.x);
+                              _updateMapMarker(routePointIndex);
+                            } else if (event is FlPointerExitEvent) {
+                              _updateHoveredPoint(null, null);
+                              _updateMapMarker(null);
+                            }
+                          },
+                          // Fix the tooltip configuration
                           touchTooltipData: LineTouchTooltipData(
-                            tooltipBgColor: Colors.blueAccent,
-                            tooltipHorizontalAlignment: FLHorizontalAlignment.center,
-                            tooltipMargin: 8,
-                            fitInsideHorizontally: true,
-                            fitInsideVertically: false,
-                            tooltipPadding: const EdgeInsets.all(8),
-                            tooltipRoundedRadius: 8,
-                            tooltipHorizontalOffset: 0,
-                            getTooltipItems: (touchedSpots) {
-                              return touchedSpots.map((spot) {
-                                // Find the exact time point for this distance
-                                double targetDistance = spot.x;
-                                FlSpot? timePoint;
-                                
-                                // Find the exact matching time point
-                                for (var point in timePoints) {
-                                  if ((point.x - targetDistance).abs() < 0.0001) {
-                                    timePoint = point;
-                                    break;
-                                  }
-                                }
-                                
-                                String timeStr = timePoint != null 
-                                    ? _formatTotalTime(timePoint.y)
-                                    : 'N/A';
-                                    
-                                return LineTooltipItem(
-                                  'Distance: ${spot.x.toStringAsFixed(2)} km\n'
-                                  'Elevation: ${spot.y.toStringAsFixed(0)} m\n'
-                                  'Time: $timeStr',
-                                  const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                );
+                            getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
+                              // Return a list of tooltip items with the same length as touchedBarSpots
+                              return touchedBarSpots.map((touchedBarSpot) {
+                                // Return null for each item to hide the tooltip
+                                return null;
                               }).toList();
                             },
                           ),
@@ -758,28 +933,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               );
                             }).toList();
                           },
-                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
-                            // Handle touch/hover events directly from the chart
-                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent) {
-                              if (touchResponse?.lineBarSpots != null && 
-                                  touchResponse!.lineBarSpots!.isNotEmpty) {
-                                // Get the touched spot directly from the chart's touch response
-                                final touchedBarSpot = touchResponse.lineBarSpots![0];
-                                
-                                // Find the closest point for the tooltip
-                                final touchedSpot = touchedBarSpot.spotIndex < elevationPoints.length 
-                                    ? elevationPoints[touchedBarSpot.spotIndex] 
-                                    : null;
-                                
-                                if (touchedSpot != null) {
-                                  // Use the touched spot's x value directly
-                                  _updateHoveredPoint(touchedBarSpot.spotIndex, touchedSpot.x);
-                                }
-                              }
-                            } else if (event is FlPointerExitEvent) {
-                              _updateHoveredPoint(null, null);
-                            }
-                          },
                           handleBuiltInTouches: true, // Let the chart handle touches
                           touchSpotThreshold: 20,
                         ),
@@ -796,20 +949,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             ),
                           ] : [],
                         ),
-                        showingTooltipIndicators: hoveredSpot != null ? 
-                          [
-                            ShowingTooltipIndicators([
-                              LineBarSpot(
-                                LineChartBarData(
-                                  spots: elevationPoints,
-                                  isCurved: true,
-                                  color: Colors.blue,
-                                ),
-                                _closestElevationPointIndex, // Use the stored index
-                                hoveredSpot!,
-                              ),
-                            ])
-                          ] : [],
+                        // Remove the showingTooltipIndicators property
+                        showingTooltipIndicators: [],
                       ),
                     );
                   },
@@ -827,4 +968,117 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     int minutes = totalMinutes.round() % 60;
     return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
   }
+
+  String _getTimeAtDistance(double distance) {
+    if (timePoints.isEmpty) return 'N/A';
+    
+    // Find the closest time point to the given distance
+    FlSpot? closestTimePoint;
+    double minDist = double.infinity;
+    
+    for (var point in timePoints) {
+      double dist = (point.x - distance).abs();
+      if (dist < minDist) {
+        minDist = dist;
+        closestTimePoint = point;
+      }
+    }
+    
+    if (closestTimePoint != null) {
+      return _formatTotalTime(closestTimePoint.y);
+    }
+    
+    return 'N/A';
+  }
+
+  int _findRoutePointIndexForDistance(double distance) {
+    if (elevationPoints.isEmpty || routePoints.isEmpty) return -1;
+    
+    // First, find the closest elevation point to this distance
+    int closestElevationIndex = -1;
+    double minDist = double.infinity;
+    
+    for (int i = 0; i < elevationPoints.length; i++) {
+      double dist = (elevationPoints[i].x - distance).abs();
+      if (dist < minDist) {
+        minDist = dist;
+        closestElevationIndex = i;
+      }
+    }
+    
+    // If we couldn't find a close elevation point, return -1
+    if (closestElevationIndex < 0) return -1;
+    
+    // Now map this elevation point index to a route point index
+    // Since both arrays might have different lengths, we need to map proportionally
+    
+    // If the arrays have the same length, we can use a direct mapping
+    if (elevationPoints.length == routePoints.length) {
+      return closestElevationIndex;
+    }
+    
+    // Otherwise, use a proportional mapping
+    double ratio = routePoints.length / elevationPoints.length;
+    int estimatedRouteIndex = (closestElevationIndex * ratio).round();
+    
+    // Ensure the index is within bounds
+    return estimatedRouteIndex.clamp(0, routePoints.length - 1);
+  }
+
+  int findClosestPointIndex(double targetDistance) {
+    return elevationPoints.indexWhere((point) => point.x >= targetDistance);
+  }
+
+  // Optimize this method to find the closest elevation point to a given distance
+  FlSpot findClosestElevationPoint(double distance) {
+    if (elevationPoints.isEmpty) return const FlSpot(0, 0);
+    
+    // Use binary search for better performance when finding the closest point
+    int low = 0;
+    int high = elevationPoints.length - 1;
+    
+    // If distance is beyond the range, return the first or last point
+    if (distance <= elevationPoints.first.x) {
+      _closestElevationPointIndex = 0;
+      return elevationPoints.first;
+    }
+    if (distance >= elevationPoints.last.x) {
+      _closestElevationPointIndex = elevationPoints.length - 1;
+      return elevationPoints.last;
+    }
+    
+    // Binary search to find the closest point
+    while (low <= high) {
+      int mid = (low + high) ~/ 2;
+      
+      if (elevationPoints[mid].x < distance) {
+        low = mid + 1;
+      } else if (elevationPoints[mid].x > distance) {
+        high = mid - 1;
+      } else {
+        // Exact match found
+        _closestElevationPointIndex = mid;
+        return elevationPoints[mid];
+      }
+    }
+    
+    // At this point, low > high
+    // The closest point is either at index high or low
+    int closestIndex;
+    if (high < 0) {
+      closestIndex = 0;
+    } else if (low >= elevationPoints.length) {
+      closestIndex = elevationPoints.length - 1;
+    } else {
+      double distLow = (elevationPoints[low].x - distance).abs();
+      double distHigh = (elevationPoints[high].x - distance).abs();
+      closestIndex = distLow < distHigh ? low : high;
+    }
+    
+    _closestElevationPointIndex = closestIndex;
+    return elevationPoints[closestIndex];
+  }
+
+  // Add a field to track the index of the closest elevation point
+  int _closestElevationPointIndex = 0;
 } 
