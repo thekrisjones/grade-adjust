@@ -1,16 +1,4 @@
-# your_project_name
+# Grade Adjust
 
-A new Flutter project.
-
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+A basic flutter app which allows calculation of the expected time at various points on a gpx route given a constant grade adjusted pace. 
+The app also includes a grade adjusted pace calculator. The grade adjustment calculations are based on https://medium.com/strava-engineering/an-improved-gap-model-8b07ae8886c3
