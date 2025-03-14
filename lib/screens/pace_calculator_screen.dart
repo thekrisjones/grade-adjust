@@ -111,7 +111,8 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
   }
 
   double calculateGradeAdjustment(double gradientPercent) {
-    double g = gradientPercent;
+    // Clamp gradient to ±35%
+    double g = gradientPercent.clamp(-35.0, 35.0);
     return (-0.000000447713 * pow(g, 4)) +
            (-0.000003068688 * pow(g, 3)) +
            (0.001882643005 * pow(g, 2)) +
@@ -227,11 +228,72 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
             ),
             Slider(
               value: gradient,
-              min: -20.0,
-              max: 20.0,
-              divisions: 40,
+              min: -35.0,
+              max: 35.0,
+              divisions: 70,
               label: '${gradient.toStringAsFixed(1)}%',
               onChanged: updateGradient,
+            ),
+            // Fine-tuning buttons for gradient
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Decrease by 5%, but not below minimum
+                      updateGradient(gradient - 5.0);
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: const Text('-5%', style: TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Decrease by 1%, but not below minimum
+                      updateGradient(gradient - 1.0);
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: const Text('-1%', style: TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Increase by 1%, but not above maximum
+                      updateGradient(gradient + 1.0);
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: const Text('+1%', style: TextStyle(fontSize: 14)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Increase by 5%, but not above maximum
+                      updateGradient(gradient + 5.0);
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: const Text('+5%', style: TextStyle(fontSize: 14)),
+                ),
+              ],
             ),
             const SizedBox(height: 32),
             
@@ -246,6 +308,147 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
               label: '${formatPace(gradeAdjustedPaceSeconds)}${getUnitSuffix()}',
               onChanged: (value) => updateFromGradeAdjustedPace(convertFromDisplayValue(value)),
             ),
+            // Fine-tuning buttons for grade adjusted pace
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Decrease by 5 seconds
+                          updateFromGradeAdjustedPace(gradeAdjustedPaceSeconds - 5);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Decrease by 1.0 speed units (increase seconds)
+                          double currentSpeed = convertToDisplayValue(gradeAdjustedPaceSeconds);
+                          double newSpeed = currentSpeed - 1.0;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromGradeAdjustedPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '-5s'
+                        : '-1.0',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Decrease by 1 second
+                          updateFromGradeAdjustedPace(gradeAdjustedPaceSeconds - 1);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Decrease by 0.1 speed units (increase seconds)
+                          double currentSpeed = convertToDisplayValue(gradeAdjustedPaceSeconds);
+                          double newSpeed = currentSpeed - 0.1;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromGradeAdjustedPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '-1s'
+                        : '-0.1',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Increase by 1 second
+                          updateFromGradeAdjustedPace(gradeAdjustedPaceSeconds + 1);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Increase by 0.1 speed units (decrease seconds)
+                          double currentSpeed = convertToDisplayValue(gradeAdjustedPaceSeconds);
+                          double newSpeed = currentSpeed + 0.1;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromGradeAdjustedPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '+1s'
+                        : '+0.1',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Increase by 5 seconds
+                          updateFromGradeAdjustedPace(gradeAdjustedPaceSeconds + 5);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Increase by 1.0 speed units (decrease seconds)
+                          double currentSpeed = convertToDisplayValue(gradeAdjustedPaceSeconds);
+                          double newSpeed = currentSpeed + 1.0;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromGradeAdjustedPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '+5s'
+                        : '+1.0',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 32),
             
             Text(
@@ -258,6 +461,147 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
               max: getMaxValue(),
               label: '${formatPace(realPaceSeconds)}${getUnitSuffix()}',
               onChanged: (value) => updateFromRealPace(convertFromDisplayValue(value)),
+            ),
+            // Fine-tuning buttons for real pace
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Decrease by 5 seconds
+                          updateFromRealPace(realPaceSeconds - 5);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Decrease by 1.0 speed units (increase seconds)
+                          double currentSpeed = convertToDisplayValue(realPaceSeconds);
+                          double newSpeed = currentSpeed - 1.0;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromRealPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '-5s'
+                        : '-1.0',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Decrease by 1 second
+                          updateFromRealPace(realPaceSeconds - 1);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Decrease by 0.1 speed units (increase seconds)
+                          double currentSpeed = convertToDisplayValue(realPaceSeconds);
+                          double newSpeed = currentSpeed - 0.1;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromRealPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '-1s'
+                        : '-0.1',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Increase by 1 second
+                          updateFromRealPace(realPaceSeconds + 1);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Increase by 0.1 speed units (decrease seconds)
+                          double currentSpeed = convertToDisplayValue(realPaceSeconds);
+                          double newSpeed = currentSpeed + 0.1;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromRealPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '+1s'
+                        : '+0.1',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      // Adjust based on unit type
+                      switch (selectedUnit) {
+                        case PaceUnit.minPerKm:
+                        case PaceUnit.minPerMile:
+                          // Increase by 5 seconds
+                          updateFromRealPace(realPaceSeconds + 5);
+                          break;
+                        case PaceUnit.kph:
+                        case PaceUnit.mph:
+                          // Increase by 1.0 speed units (decrease seconds)
+                          double currentSpeed = convertToDisplayValue(realPaceSeconds);
+                          double newSpeed = currentSpeed + 1.0;
+                          // Ensure we don't exceed max speed (min pace)
+                          newSpeed = newSpeed.clamp(getMinValue(), getMaxValue());
+                          updateFromRealPace(convertFromDisplayValue(newSpeed));
+                          break;
+                      }
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    minimumSize: const Size(40, 36),
+                  ),
+                  child: Text(
+                    selectedUnit == PaceUnit.minPerKm || selectedUnit == PaceUnit.minPerMile
+                        ? '+5s'
+                        : '+1.0',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

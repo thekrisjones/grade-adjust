@@ -8,6 +8,31 @@ import 'dart:math' show sin, cos, sqrt, atan2, max, min, pow, exp, pi, Point;
 import 'dart:async'; // Add timer import for debounce
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 
+// Class to store checkpoint data
+class CheckpointData {
+  double distance;
+  double elevation = 0;
+  double elevationGain = 0;
+  double elevationLoss = 0;
+  double cumulativeTime = 0;
+  double timeFromPrevious = 0;
+  String id = DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
+
+  CheckpointData({required this.distance});
+  
+  // Create a copy of this checkpoint
+  CheckpointData copy() {
+    final cp = CheckpointData(distance: distance);
+    cp.elevation = elevation;
+    cp.elevationGain = elevationGain;
+    cp.elevationLoss = elevationLoss;
+    cp.cumulativeTime = cumulativeTime;
+    cp.timeFromPrevious = timeFromPrevious;
+    cp.id = id;
+    return cp;
+  }
+}
+
 class RouteAnalyzerScreen extends StatefulWidget {
   const RouteAnalyzerScreen({super.key});
 
@@ -30,13 +55,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   FlSpot? hoveredSpot; // Add this to track the exact hovered spot
   Timer? _mapDebounceTimer; // Separate timer for map marker
   Timer? _chartDebounceTimer; // Separate timer for chart marker
+  Timer? _checkpointUpdateTimer; // Timer for debouncing checkpoint updates
   final mapController = MapController();
   List<double> smoothedGradients = [];
   
+  // Checkpoint-related state
+  bool showCheckpoints = false;
+  List<CheckpointData> checkpoints = [];
+  
   // Pace-related state
-  double selectedPaceSeconds = 150; // Default 2:30 (150 seconds)
-  static const double minPaceSeconds = 150; // 2:30
-  static const double maxPaceSeconds = 1200; // 20:00
+  double selectedPaceSeconds = 240; // Default 4:00 (240 seconds)
+  static const double minPaceSeconds = 165; // 2:45
+  static const double maxPaceSeconds = 900; // 15:00
 
   String formatPace(double seconds) {
     int mins = (seconds / 60).floor();
@@ -45,7 +75,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   double calculateGradeAdjustment(double gradientPercent) {
-    double g = gradientPercent;
+    // Clamp gradient to ±35%
+    double g = gradientPercent.clamp(-35.0, 35.0);
     return (-0.000000447713 * pow(g, 4)) +
            (-0.000003068688 * pow(g, 3)) +
            (0.001882643005 * pow(g, 2)) +
@@ -151,6 +182,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       minElevation = null;
       hoveredPointIndex = null;
       hoveredDistance = null;
+      
+      // Reset checkpoints
+      checkpoints = [];
+      showCheckpoints = false;
 
       // Process route points
       routePoints = points
@@ -202,11 +237,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       }
 
       // Calculate average point spacing in meters
-      double avgSpacing = totalDistance / pointCount;
+      double avgSpacing = pointCount > 0 ? totalDistance / pointCount : 0;
       
       // Calculate window size based on point spacing
       // We want to smooth over roughly 100m of distance
-      int windowSize = max(3, min(15, (100 / avgSpacing).round()));
+      int windowSize = max(3, min(15, avgSpacing > 0 ? (100 / avgSpacing).round() : 5));
 
       if (elevationPoints.isNotEmpty) {
         maxElevation = elevationPoints.map((p) => p.y).reduce((a, b) => max(a, b));
@@ -323,7 +358,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       final gradient = (dy / dx) * 100;
       
       // Clamp extreme values that might be due to GPS errors
-      final clampedGradient = gradient.clamp(-40.0, 40.0);
+      final clampedGradient = gradient.clamp(-35.0, 35.0);
       grads.add(clampedGradient);
     }
     
@@ -417,6 +452,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   void dispose() {
     _mapDebounceTimer?.cancel();
     _chartDebounceTimer?.cancel();
+    _checkpointUpdateTimer?.cancel(); // Cancel the checkpoint update timer
     super.dispose();
   }
 
@@ -449,9 +485,94 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               setState(() {
                                 selectedPaceSeconds = value;
                                 calculateTimePoints();
+                                // Recalculate all checkpoint metrics when pace changes
+                                if (checkpoints.isNotEmpty) {
+                                  _calculateCheckpointMetrics(startIndex: 0);
+                                }
                               });
                             },
                           ),
+                        ),
+                      ],
+                    ),
+                    // Fine-tuning buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              // Decrease by 5 seconds, but not below minimum
+                              selectedPaceSeconds = max(minPaceSeconds, selectedPaceSeconds - 5);
+                              calculateTimePoints();
+                              // Recalculate all checkpoint metrics
+                              if (checkpoints.isNotEmpty) {
+                                _calculateCheckpointMetrics(startIndex: 0);
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            minimumSize: const Size(40, 36),
+                          ),
+                          child: const Text('-5s', style: TextStyle(fontSize: 14)),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              // Decrease by 1 second, but not below minimum
+                              selectedPaceSeconds = max(minPaceSeconds, selectedPaceSeconds - 1);
+                              calculateTimePoints();
+                              // Recalculate all checkpoint metrics
+                              if (checkpoints.isNotEmpty) {
+                                _calculateCheckpointMetrics(startIndex: 0);
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            minimumSize: const Size(40, 36),
+                          ),
+                          child: const Text('-1s', style: TextStyle(fontSize: 14)),
+                        ),
+                        const SizedBox(width: 16),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              // Increase by 1 second, but not above maximum
+                              selectedPaceSeconds = min(maxPaceSeconds, selectedPaceSeconds + 1);
+                              calculateTimePoints();
+                              // Recalculate all checkpoint metrics
+                              if (checkpoints.isNotEmpty) {
+                                _calculateCheckpointMetrics(startIndex: 0);
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            minimumSize: const Size(40, 36),
+                          ),
+                          child: const Text('+1s', style: TextStyle(fontSize: 14)),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              // Increase by 5 seconds, but not above maximum
+                              selectedPaceSeconds = min(maxPaceSeconds, selectedPaceSeconds + 5);
+                              calculateTimePoints();
+                              // Recalculate all checkpoint metrics
+                              if (checkpoints.isNotEmpty) {
+                                _calculateCheckpointMetrics(startIndex: 0);
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            minimumSize: const Size(40, 36),
+                          ),
+                          child: const Text('+5s', style: TextStyle(fontSize: 14)),
                         ),
                       ],
                     ),
@@ -485,9 +606,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             
                             final closestIndex = findClosestRoutePoint(localPosition, constraints);
                             if (closestIndex >= 0 && closestIndex < routePoints.length) {
-                              // Update the map marker
-                              _updateMapMarker(closestIndex);
-                              
                               // Map the route point index to an elevation point index
                               int elevationIndex;
                               
@@ -501,10 +619,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
                               }
                               
-                              // If we found a valid elevation point, update the chart
+                              // If we found a valid elevation point, update the chart and info panel
                               if (elevationIndex >= 0 && elevationIndex < elevationPoints.length) {
-                                double distance = elevationPoints[elevationIndex].x;
-                                _updateHoveredPoint(elevationIndex, distance);
+                                // Update all state in a single setState call for immediate visual feedback
+                                setState(() {
+                                  hoveredPointIndex = closestIndex;
+                                  _closestElevationPointIndex = elevationIndex;
+                                  hoveredDistance = elevationPoints[elevationIndex].x;
+                                  hoveredSpot = elevationPoints[elevationIndex];
+                                });
                               }
                               
                               // Set a very short throttle to prevent too many updates
@@ -512,8 +635,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             }
                           },
                           onExit: (_) {
-                            _updateMapMarker(null);
-                            _updateHoveredPoint(null, null);
+                            setState(() {
+                              hoveredPointIndex = null;
+                              hoveredDistance = null;
+                              hoveredSpot = null;
+                              _closestElevationPointIndex = -1;
+                            });
                           },
                           child: FlutterMap(
                             mapController: mapController,
@@ -558,6 +685,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     ),
                                   ],
                                 ),
+                              // Add markers for checkpoints
+                              if (showCheckpoints && checkpoints.isNotEmpty)
+                                MarkerLayer(
+                                  markers: checkpoints.map((checkpoint) {
+                                    // Find the closest route point to this checkpoint distance
+                                    int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
+                                    if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
+                                      return Marker(
+                                        point: LatLng(0, 0),
+                                        width: 0,
+                                        height: 0,
+                                        child: Container(),
+                                      );
+                                    }
+                                    
+                                    return Marker(
+                                      point: routePoints[routePointIndex],
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.withOpacity(0.7),
+                                          shape: BoxShape.circle,
+                                          border: Border.all(
+                                            color: Colors.white,
+                                            width: 2,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
                             ],
                           ),
                         );
@@ -568,155 +727,181 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
               ),
               
               // Information panel between map and elevation chart
-              if (routePoints.isNotEmpty && hoveredSpot != null && _closestElevationPointIndex >= 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
-                  margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8.0),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Use a responsive layout based on available width
-                      final isWide = constraints.maxWidth > 600;
-                      
-                      // Create info items
-                      final infoItems = [
-                        // Distance information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Distance',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            Text(
-                              '${hoveredSpot!.x.toStringAsFixed(2)} km',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        // Elevation information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Elevation',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            Text(
-                              '${hoveredSpot!.y.toStringAsFixed(0)} m',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        // Elevation gain information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Elevation Gain',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            Text(
-                              '${cumulativeElevationGain[_closestElevationPointIndex].toStringAsFixed(0)} m',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        // Elevation loss information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Elevation Loss',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            Text(
-                              '${cumulativeElevationLoss[_closestElevationPointIndex].toStringAsFixed(0)} m',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: Colors.red,
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        // Time information
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Estimated Time',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            Text(
-                              _getTimeAtDistance(hoveredSpot!.x),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ];
-                      
-                      // Return appropriate layout based on screen width
-                      return isWide
-                        ? Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: infoItems,
-                          )
-                        : Wrap(
-                            spacing: 20,
-                            runSpacing: 12,
-                            children: infoItems,
-                          );
-                    },
-                  ),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+                margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Use a responsive layout based on available width
+                    final isWide = constraints.maxWidth > 600;
+                    
+                    // Get the point to display - either the hovered point or the last point in the route
+                    final displaySpot = hoveredSpot ?? (elevationPoints.isNotEmpty ? elevationPoints.last : null);
+                    final displayIndex = hoveredSpot != null && _closestElevationPointIndex >= 0 ? 
+                                        _closestElevationPointIndex : 
+                                        (elevationPoints.isNotEmpty ? elevationPoints.length - 1 : -1);
+                    
+                    // If we have no data yet, show a placeholder
+                    if (displaySpot == null || displayIndex < 0) {
+                      return const Center(
+                        child: Text(
+                          'Upload a GPX file to see route information',
+                          style: TextStyle(
+                            fontStyle: FontStyle.italic,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      );
+                    }
+                    
+                    // Create info items
+                    final infoItems = [
+                      // Distance information
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Distance',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            '${displaySpot.x.toStringAsFixed(2)} km',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Elevation information
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Elevation',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            '${displaySpot.y.toStringAsFixed(0)} m',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Elevation gain information
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Elevation Gain',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            displayIndex >= 0 && displayIndex < cumulativeElevationGain.length
+                                ? '${cumulativeElevationGain[displayIndex].toStringAsFixed(0)} m'
+                                : cumulativeElevationGain.isNotEmpty 
+                                  ? '${cumulativeElevationGain.last.toStringAsFixed(0)} m'
+                                  : '0 m',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Elevation loss information
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Elevation Loss',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            displayIndex >= 0 && displayIndex < cumulativeElevationLoss.length
+                                ? '${cumulativeElevationLoss[displayIndex].toStringAsFixed(0)} m'
+                                : cumulativeElevationLoss.isNotEmpty 
+                                  ? '${cumulativeElevationLoss.last.toStringAsFixed(0)} m'
+                                  : '0 m',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Time information
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Estimated Time',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Text(
+                            _getTimeAtDistance(displaySpot.x),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ];
+                    
+                    // Return appropriate layout based on screen width
+                    return isWide
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: infoItems,
+                        )
+                      : Wrap(
+                          spacing: 20,
+                          runSpacing: 12,
+                          children: infoItems,
+                        );
+                  },
+                ),
+              ),
               
               // Elevation chart
               Container(
@@ -824,23 +1009,43 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             dotData: FlDotData(
                               show: true,
                               checkToShowDot: (spot, barData) {
-                                // Only show dot for the hovered spot
-                                // But we need to find the actual data point on the line
-                                if (hoveredSpot == null) return false;
+                                // Show dot for the hovered spot
+                                if (hoveredSpot != null && 
+                                    (spot.x - hoveredSpot!.x).abs() < 0.05 && 
+                                    spot.y == hoveredSpot!.y) {
+                                  return true;
+                                }
                                 
-                                // Find the closest actual data point to show the dot
-                                for (var dataPoint in elevationPoints) {
-                                  // Use a small threshold to find the closest point
-                                  if ((dataPoint.x - hoveredSpot!.x).abs() < 0.05) {
-                                    return spot.x == dataPoint.x && spot.y == dataPoint.y;
+                                // Show dots for checkpoints
+                                if (showCheckpoints) {
+                                  for (var checkpoint in checkpoints) {
+                                    // Find the closest elevation point to this checkpoint
+                                    FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                    if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                      return true;
+                                    }
                                   }
                                 }
+                                
                                 return false;
                               },
                               getDotPainter: (spot, percent, barData, index) {
+                                // Check if this is a checkpoint dot
+                                bool isCheckpoint = false;
+                                if (showCheckpoints) {
+                                  for (var checkpoint in checkpoints) {
+                                    FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                    if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                      isCheckpoint = true;
+                                      break;
+                                    }
+                                  }
+                                }
+                                
+                                // Use red for checkpoints, blue for hovered spot
                                 return FlDotCirclePainter(
-                                  radius: 6,
-                                  color: Colors.blue,
+                                  radius: isCheckpoint ? 6 : 6,
+                                  color: isCheckpoint ? Colors.red : Colors.blue,
                                   strokeWidth: 2,
                                   strokeColor: Colors.white,
                                 );
@@ -874,14 +1079,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             if (touchResponse?.lineBarSpots == null || 
                                 touchResponse!.lineBarSpots!.isEmpty) {
                               if (event is FlPointerExitEvent) {
-                                _updateHoveredPoint(null, null);
-                                _updateMapMarker(null);
+                                setState(() {
+                                  hoveredDistance = null;
+                                  hoveredSpot = null;
+                                  hoveredPointIndex = null;
+                                  _closestElevationPointIndex = -1;
+                                });
                               }
                               return;
                             }
                             
                             // Handle touch/hover events directly from the chart
-                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent) {
+                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent || event is FlTapDownEvent) {
                               // Get the touched spot directly from the chart's touch response
                               final touchedBarSpot = touchResponse.lineBarSpots![0];
                               
@@ -891,15 +1100,23 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               // Get the actual elevation point
                               final touchedSpot = elevationPoints[touchedBarSpot.spotIndex];
                               
-                              // Find the corresponding route point index
-                              int routePointIndex = _findRoutePointIndexForDistance(touchedSpot.x);
-                              
-                              // Update both the chart and map markers
-                              _updateHoveredPoint(touchedBarSpot.spotIndex, touchedSpot.x);
-                              _updateMapMarker(routePointIndex);
+                              // Update the hovered spot directly without debounce for immediate visual feedback
+                              setState(() {
+                                hoveredSpot = touchedSpot;
+                                hoveredDistance = touchedSpot.x;
+                                _closestElevationPointIndex = touchedBarSpot.spotIndex;
+                                
+                                // Find the corresponding route point index
+                                int routePointIndex = _findRoutePointIndexForDistance(touchedSpot.x);
+                                hoveredPointIndex = routePointIndex;
+                              });
                             } else if (event is FlPointerExitEvent) {
-                              _updateHoveredPoint(null, null);
-                              _updateMapMarker(null);
+                              setState(() {
+                                hoveredDistance = null;
+                                hoveredSpot = null;
+                                hoveredPointIndex = null;
+                                _closestElevationPointIndex = -1;
+                              });
                             }
                           },
                           // Fix the tooltip configuration
@@ -916,9 +1133,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             return spotIndexes.map((spotIndex) {
                               return TouchedSpotIndicatorData(
                                 FlLine(
-                                  color: Colors.blue,
-                                  strokeWidth: 2,
-                                  dashArray: [5, 5],
+                                  color: Colors.transparent,
+                                  strokeWidth: 0,
                                 ),
                                 FlDotData(
                                   getDotPainter: (spot, percent, barData, index) {
@@ -937,23 +1153,266 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           touchSpotThreshold: 20,
                         ),
                         extraLinesData: ExtraLinesData(
-                          verticalLines: hoveredSpot != null ? [
-                            VerticalLine(
-                              x: hoveredSpot!.x,
-                              color: Colors.blue.withOpacity(0.7),
-                              strokeWidth: 1.5,
-                              dashArray: [5, 5],
-                              label: VerticalLineLabel(
-                                show: false,
-                              ),
-                            ),
-                          ] : [],
+                          verticalLines: [],
                         ),
                         // Remove the showingTooltipIndicators property
                         showingTooltipIndicators: [],
                       ),
                     );
                   },
+                ),
+              ),
+              
+              // Checkpoint button and table
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Button to toggle checkpoint table
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          showCheckpoints = !showCheckpoints;
+                          if (showCheckpoints && checkpoints.isEmpty) {
+                            // Add an initial empty checkpoint
+                            addCheckpoint();
+                          }
+                        });
+                      },
+                      icon: Icon(showCheckpoints ? Icons.visibility_off : Icons.visibility),
+                      label: Text(showCheckpoints ? 'Hide Checkpoints' : 'Add Checkpoints'),
+                    ),
+                    
+                    // Checkpoint table
+                    if (showCheckpoints) ...[
+                      const SizedBox(height: 16),
+                      
+                      // Table header
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(8),
+                            topRight: Radius.circular(8),
+                          ),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Distance (km)',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Elevation (m)',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Elev. Gain (m)',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Elev. Loss (m)',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Total Time',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                'Segment Time',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 48), // Space for delete button
+                          ],
+                        ),
+                      ),
+                      
+                      // Table rows
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: const BorderRadius.only(
+                            bottomLeft: Radius.circular(8),
+                            bottomRight: Radius.circular(8),
+                          ),
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: checkpoints.length,
+                          itemBuilder: (context, index) {
+                            final checkpoint = checkpoints[index];
+                            return Container(
+                              decoration: BoxDecoration(
+                                border: Border(
+                                  bottom: index < checkpoints.length - 1
+                                      ? BorderSide(color: Colors.grey.shade300)
+                                      : BorderSide.none,
+                                ),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                              child: Row(
+                                children: [
+                                  // Distance (editable)
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextFormField(
+                                      key: ValueKey('checkpoint_${checkpoint.id}'),
+                                      initialValue: checkpoint.distance > 0
+                                          ? checkpoint.distance.toStringAsFixed(1)
+                                          : '',
+                                      decoration: const InputDecoration(
+                                        isDense: true,
+                                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                        border: OutlineInputBorder(),
+                                        hintText: 'Enter km',
+                                      ),
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      onChanged: (value) {
+                                        // Try to parse the value, but don't update if it's not a valid number
+                                        double? distance = double.tryParse(value);
+                                        if (distance != null) {
+                                          updateCheckpointDistance(index, distance);
+                                        }
+                                      },
+                                      // Force recalculation when the user finishes editing
+                                      onEditingComplete: () {
+                                        // Cancel any existing timer to ensure immediate update
+                                        _checkpointUpdateTimer?.cancel();
+                                        
+                                        // This ensures we recalculate even if the user presses Enter
+                                        setState(() {
+                                          // Sort checkpoints by distance
+                                          checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+                                          
+                                          // Recalculate all metrics
+                                          _calculateCheckpointMetrics();
+                                        });
+                                        FocusScope.of(context).unfocus(); // Hide keyboard
+                                      },
+                                    ),
+                                  ),
+                                  
+                                  // Elevation (read-only)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                      child: Text(
+                                        checkpoint.elevation.toStringAsFixed(0),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Elevation Gain (read-only)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                      child: Text(
+                                        checkpoint.elevationGain.toStringAsFixed(0),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Elevation Loss (read-only)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                      child: Text(
+                                        checkpoint.elevationLoss.toStringAsFixed(0),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Cumulative Time (read-only)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                      child: Text(
+                                        _formatTotalTime(checkpoint.cumulativeTime),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Time from Previous (read-only)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                      child: Text(
+                                        _formatTotalTime(checkpoint.timeFromPrevious),
+                                      ),
+                                    ),
+                                  ),
+                                  
+                                  // Delete button
+                                  SizedBox(
+                                    width: 40,
+                                    child: IconButton(
+                                      icon: const Icon(Icons.delete, size: 20),
+                                      onPressed: () => removeCheckpoint(index),
+                                      color: Colors.red,
+                                      padding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      
+                      // Add checkpoint button
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            // Add a new checkpoint and immediately recalculate all metrics
+                            addCheckpoint();
+                            // Force a rebuild to ensure the UI reflects the updated values
+                            setState(() {});
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Checkpoint'),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -1080,5 +1539,172 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   // Add a field to track the index of the closest elevation point
-  int _closestElevationPointIndex = 0;
+  int _closestElevationPointIndex = -1;
+
+  // Add a new checkpoint with the given distance
+  void addCheckpoint() {
+    setState(() {
+      // Create a new checkpoint with a unique ID and timestamp to ensure uniqueness
+      final newCheckpoint = CheckpointData(distance: 0.0);
+      newCheckpoint.id = DateTime.now().millisecondsSinceEpoch.toString();
+      
+      // Add the checkpoint
+      checkpoints.add(newCheckpoint);
+      
+      // Sort checkpoints by distance
+      checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+      
+      // Recalculate metrics for all checkpoints to ensure consistency
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+  }
+  
+  // Update the distance of a checkpoint with debounce
+  void updateCheckpointDistance(int index, double newDistance) {
+    if (index < 0 || index >= checkpoints.length) return;
+    
+    // Cancel any existing timer
+    _checkpointUpdateTimer?.cancel();
+    
+    // Store the checkpoint's ID before updating
+    final checkpointId = checkpoints[index].id;
+    
+    // Ensure distance is not negative
+    newDistance = max(0, newDistance);
+    
+    // Ensure distance is not beyond the route length
+    if (elevationPoints.isNotEmpty) {
+      newDistance = min(newDistance, elevationPoints.last.x);
+    }
+    
+    // Update the distance immediately
+    setState(() {
+      checkpoints[index].distance = newDistance;
+    });
+    
+    // Set a timer to update the table after a short delay (1.0 second)
+    _checkpointUpdateTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() {
+          // Sort checkpoints by distance
+          checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+          
+          // Recalculate metrics for all checkpoints to ensure consistency
+          _calculateCheckpointMetrics(startIndex: 0);
+        });
+      }
+    });
+  }
+  
+  // Remove a checkpoint at the given index
+  void removeCheckpoint(int index) {
+    if (index < 0 || index >= checkpoints.length) return;
+    
+    setState(() {
+      // Remove the checkpoint
+      checkpoints.removeAt(index);
+      
+      // Recalculate metrics for all checkpoints to ensure consistency
+      if (checkpoints.isNotEmpty) {
+        _calculateCheckpointMetrics(startIndex: 0);
+      }
+    });
+  }
+  
+  // Calculate metrics for all checkpoints
+  void _calculateCheckpointMetrics({int startIndex = 0}) {
+    if (elevationPoints.isEmpty || timePoints.isEmpty) return;
+    
+    // Always recalculate all checkpoints for consistency
+    startIndex = 0;
+    
+    // First, ensure all checkpoints have valid distances
+    for (int i = 0; i < checkpoints.length; i++) {
+      final checkpoint = checkpoints[i];
+      
+      // Ensure distance is not negative
+      checkpoint.distance = max(0, checkpoint.distance);
+      
+      // Ensure distance is not beyond the route length
+      if (elevationPoints.isNotEmpty) {
+        checkpoint.distance = min(checkpoint.distance, elevationPoints.last.x);
+      }
+    }
+    
+    // Re-sort checkpoints by distance to ensure correct order
+    checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+    
+    // Process all checkpoints to ensure consistency
+    for (int i = 0; i < checkpoints.length; i++) {
+      final checkpoint = checkpoints[i];
+      
+      // Find the closest elevation point to this distance
+      FlSpot elevationSpot = findClosestElevationPoint(checkpoint.distance);
+      int elevationIndex = _closestElevationPointIndex;
+      
+      // Set elevation
+      checkpoint.elevation = elevationSpot.y;
+      
+      // Set cumulative elevation gain/loss
+      if (elevationIndex >= 0 && elevationIndex < cumulativeElevationGain.length) {
+        checkpoint.elevationGain = cumulativeElevationGain[elevationIndex];
+        checkpoint.elevationLoss = cumulativeElevationLoss[elevationIndex];
+      }
+      
+      // Find the closest time point to this distance
+      double cumulativeTime = 0;
+      
+      // Handle edge cases for time calculation
+      if (checkpoint.distance <= 0 && timePoints.isNotEmpty) {
+        // At start of route
+        cumulativeTime = 0;
+      } else if (checkpoint.distance >= timePoints.last.x) {
+        // At or beyond end of route
+        cumulativeTime = timePoints.last.y;
+      } else {
+        // Somewhere in the middle - find the closest time points and interpolate
+        FlSpot? prevPoint;
+        FlSpot? nextPoint;
+        
+        for (int j = 0; j < timePoints.length - 1; j++) {
+          if (timePoints[j].x <= checkpoint.distance && timePoints[j + 1].x >= checkpoint.distance) {
+            prevPoint = timePoints[j];
+            nextPoint = timePoints[j + 1];
+            break;
+          }
+        }
+        
+        if (prevPoint != null && nextPoint != null) {
+          // Interpolate between the two points
+          double timeDiff = nextPoint.y - prevPoint.y;
+          double distDiff = nextPoint.x - prevPoint.x;
+          if (distDiff > 0) {  // Avoid division by zero
+            double ratio = (checkpoint.distance - prevPoint.x) / distDiff;
+            cumulativeTime = prevPoint.y + (timeDiff * ratio);
+          } else {
+            cumulativeTime = prevPoint.y;
+          }
+        } else {
+          // Fallback to the old method if we couldn't find bracketing points
+          for (var timePoint in timePoints) {
+            if (timePoint.x <= checkpoint.distance) {
+              cumulativeTime = timePoint.y;
+            } else {
+              break;
+            }
+          }
+        }
+      }
+      
+      // Set cumulative time
+      checkpoint.cumulativeTime = cumulativeTime;
+      
+      // Calculate time from previous checkpoint
+      if (i > 0) {
+        checkpoint.timeFromPrevious = checkpoint.cumulativeTime - checkpoints[i-1].cumulativeTime;
+      } else {
+        checkpoint.timeFromPrevious = checkpoint.cumulativeTime;
+      }
+    }
+  }
 } 
