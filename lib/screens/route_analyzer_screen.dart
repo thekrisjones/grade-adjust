@@ -1085,7 +1085,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           ),
                           getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
                             return spotIndexes.map((spotIndex) {
-                              return TouchedSpotIndicator(
+                              return TouchedSpotIndicatorData(
                                 FlLine(
                                   color: Colors.white.withOpacity(0.5),
                                   strokeWidth: 1,
@@ -1096,7 +1096,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                   getDotPainter: (spot, percent, barData, index) {
                                     return FlDotCirclePainter(
                                       radius: 4,
-                                      color: getGradientColor(smoothedGradients[index]),
+                                      color: getGradientColor(smoothedGradients[spotIndex]),
                                       strokeWidth: 2,
                                       strokeColor: Colors.white,
                                     );
