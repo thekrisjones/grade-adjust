@@ -1074,52 +1074,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         maxX: elevationPoints.last.x,
                         lineTouchData: LineTouchData(
                           enabled: true,
-                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
-                            // Skip processing if there's no touch response or no spots
-                            if (touchResponse?.lineBarSpots == null || 
-                                touchResponse!.lineBarSpots!.isEmpty) {
-                              if (event is FlPointerExitEvent) {
-                                setState(() {
-                                  hoveredDistance = null;
-                                  hoveredSpot = null;
-                                  hoveredPointIndex = null;
-                                  _closestElevationPointIndex = -1;
-                                });
-                              }
-                              return;
-                            }
-                            
-                            // Handle touch/hover events directly from the chart
-                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent || event is FlTapDownEvent) {
-                              // Get the touched spot directly from the chart's touch response
-                              final touchedBarSpot = touchResponse.lineBarSpots![0];
-                              
-                              // Skip if the spot index is out of bounds
-                              if (touchedBarSpot.spotIndex >= elevationPoints.length) return;
-                              
-                              // Get the actual elevation point
-                              final touchedSpot = elevationPoints[touchedBarSpot.spotIndex];
-                              
-                              // Update the hovered spot directly without debounce for immediate visual feedback
-                              setState(() {
-                                hoveredSpot = touchedSpot;
-                                hoveredDistance = touchedSpot.x;
-                                _closestElevationPointIndex = touchedBarSpot.spotIndex;
-                                
-                                // Find the corresponding route point index
-                                int routePointIndex = _findRoutePointIndexForDistance(touchedSpot.x);
-                                hoveredPointIndex = routePointIndex;
-                              });
-                            } else if (event is FlPointerExitEvent) {
-                              setState(() {
-                                hoveredDistance = null;
-                                hoveredSpot = null;
-                                hoveredPointIndex = null;
-                                _closestElevationPointIndex = -1;
-                              });
-                            }
-                          },
-                          // Fix the tooltip configuration
                           touchTooltipData: LineTouchTooltipData(
                             getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
                               // Return a list of tooltip items with the same length as touchedBarSpots
@@ -1131,10 +1085,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           ),
                           getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
                             return spotIndexes.map((spotIndex) {
-                              return TouchedSpotIndicatorData(
+                              return TouchedSpotIndicator(
                                 FlLine(
-                                  color: Colors.transparent,
-                                  strokeWidth: 0,
+                                  color: Colors.white.withOpacity(0.5),
+                                  strokeWidth: 1,
+                                  dashArray: [5, 5],
                                 ),
                                 FlDotData(
                                   show: true,
@@ -1149,9 +1104,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               );
                             }).toList();
-                          },
-                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
-                            // Optional: Add custom touch handling here
                           },
                           handleBuiltInTouches: true,
                           mouseCursorResolver: (FlTouchEvent event, LineTouchResponse? response) {
