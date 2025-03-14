@@ -869,40 +869,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         maxX: elevationPoints.last.x,
                         lineTouchData: LineTouchData(
                           enabled: true,
-                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
-                            // Skip processing if there's no touch response or no spots
-                            if (touchResponse?.lineBarSpots == null || 
-                                touchResponse!.lineBarSpots!.isEmpty) {
-                              if (event is FlPointerExitEvent) {
-                                _updateHoveredPoint(null, null);
-                                _updateMapMarker(null);
-                              }
-                              return;
-                            }
-                            
-                            // Handle touch/hover events directly from the chart
-                            if (event is FlPointerHoverEvent || event is FlPanUpdateEvent) {
-                              // Get the touched spot directly from the chart's touch response
-                              final touchedBarSpot = touchResponse.lineBarSpots![0];
-                              
-                              // Skip if the spot index is out of bounds
-                              if (touchedBarSpot.spotIndex >= elevationPoints.length) return;
-                              
-                              // Get the actual elevation point
-                              final touchedSpot = elevationPoints[touchedBarSpot.spotIndex];
-                              
-                              // Find the corresponding route point index
-                              int routePointIndex = _findRoutePointIndexForDistance(touchedSpot.x);
-                              
-                              // Update both the chart and map markers
-                              _updateHoveredPoint(touchedBarSpot.spotIndex, touchedSpot.x);
-                              _updateMapMarker(routePointIndex);
-                            } else if (event is FlPointerExitEvent) {
-                              _updateHoveredPoint(null, null);
-                              _updateMapMarker(null);
-                            }
-                          },
-                          // Fix the tooltip configuration
                           touchTooltipData: LineTouchTooltipData(
                             getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
                               // Return a list of tooltip items with the same length as touchedBarSpots
@@ -912,19 +878,20 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               }).toList();
                             },
                           ),
-                          getTouchedSpotIndicator: (barData, spotIndexes) {
+                          getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
                             return spotIndexes.map((spotIndex) {
                               return TouchedSpotIndicatorData(
                                 FlLine(
-                                  color: Colors.blue,
-                                  strokeWidth: 2,
-                                  dashArray: [5, 5],
+                                  color: Colors.white.withOpacity(0.5),
+                                  strokeWidth: 1,
+                                  dashArray: [5, 5], // Optional: makes the line dashed
                                 ),
                                 FlDotData(
+                                  show: true,
                                   getDotPainter: (spot, percent, barData, index) {
                                     return FlDotCirclePainter(
-                                      radius: 6,
-                                      color: Colors.blue,
+                                      radius: 4,
+                                      color: getGradientColor(smoothedGradients[index]),
                                       strokeWidth: 2,
                                       strokeColor: Colors.white,
                                     );
@@ -933,8 +900,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               );
                             }).toList();
                           },
-                          handleBuiltInTouches: true, // Let the chart handle touches
-                          touchSpotThreshold: 20,
+                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
+                            // Optional: Add custom touch handling here
+                          },
+                          handleBuiltInTouches: true,
+                          mouseCursorResolver: (FlTouchEvent event, LineTouchResponse? response) {
+                            return SystemMouseCursors.click;
+                          },
                         ),
                         extraLinesData: ExtraLinesData(
                           verticalLines: hoveredSpot != null ? [
