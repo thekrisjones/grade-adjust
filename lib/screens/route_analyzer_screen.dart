@@ -1129,7 +1129,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               }).toList();
                             },
                           ),
-                          getTouchedSpotIndicator: (barData, spotIndexes) {
+                          getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
                             return spotIndexes.map((spotIndex) {
                               return TouchedSpotIndicatorData(
                                 FlLine(
@@ -1137,10 +1137,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                   strokeWidth: 0,
                                 ),
                                 FlDotData(
+                                  show: true,
                                   getDotPainter: (spot, percent, barData, index) {
                                     return FlDotCirclePainter(
-                                      radius: 6,
-                                      color: Colors.blue,
+                                      radius: 4,
+                                      color: getGradientColor(smoothedGradients[index]),
                                       strokeWidth: 2,
                                       strokeColor: Colors.white,
                                     );
@@ -1149,8 +1150,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               );
                             }).toList();
                           },
-                          handleBuiltInTouches: true, // Let the chart handle touches
-                          touchSpotThreshold: 20,
+                          touchCallback: (FlTouchEvent event, LineTouchResponse? touchResponse) {
+                            // Optional: Add custom touch handling here
+                          },
+                          handleBuiltInTouches: true,
+                          mouseCursorResolver: (FlTouchEvent event, LineTouchResponse? response) {
+                            return SystemMouseCursors.click;
+                          },
                         ),
                         extraLinesData: ExtraLinesData(
                           verticalLines: [],

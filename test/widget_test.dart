@@ -7,7 +7,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:your_project_name/screens/route_analyzer_screen.dart';
+import 'package:grade_adjust/screens/route_analyzer_screen.dart';
 
 void main() {
   testWidgets('Route analyzer smoke test', (WidgetTester tester) async {
