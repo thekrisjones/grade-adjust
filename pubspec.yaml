@@ -21,6 +21,7 @@ dependencies:
   flutter_map_cancellable_tile_provider: ^2.0.0
   flutter_web_plugins:
     sdk: flutter
+  excel: ^4.0.6
   
   # Add other dependencies here
 

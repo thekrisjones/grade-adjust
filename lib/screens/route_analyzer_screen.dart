@@ -7,6 +7,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'dart:math' show sin, cos, sqrt, atan2, max, min, pow, exp, pi, Point;
 import 'dart:async'; // Add timer import for debounce
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
+import 'package:excel/excel.dart' as xl; // Import Excel library with prefix
+import 'package:flutter/foundation.dart' show kIsWeb; // For web platform detection
+import 'dart:io'; // For file operations on native platforms
 
 // Class to store checkpoint data
 class CheckpointData {
@@ -17,6 +20,7 @@ class CheckpointData {
   double cumulativeTime = 0;
   double timeFromPrevious = 0;
   String id = DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
+  String? name;
 
   CheckpointData({required this.distance});
   
@@ -29,6 +33,7 @@ class CheckpointData {
     cp.cumulativeTime = cumulativeTime;
     cp.timeFromPrevious = timeFromPrevious;
     cp.id = id;
+    cp.name = name;
     return cp;
   }
 }
@@ -254,6 +259,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
       // Calculate initial time points
       calculateTimePoints();
+      
+      // Process waypoints from GPX file
+      processWaypoints();
 
       // Fit map bounds to show the entire route
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -265,6 +273,79 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         );
       });
     });
+  }
+  
+  // Process waypoints from GPX file and add them as checkpoints
+  void processWaypoints() {
+    if (gpxData == null || gpxData!.wpts.isEmpty || routePoints.isEmpty) return;
+    
+    // Create a list to store valid waypoints
+    List<CheckpointData> waypointCheckpoints = [];
+    
+    // Process each waypoint
+    for (var waypoint in gpxData!.wpts) {
+      if (waypoint.lat == null || waypoint.lon == null) continue;
+      
+      // Find closest point on route
+      double minDistance = double.infinity;
+      int closestPointIndex = -1;
+      
+      for (int i = 0; i < routePoints.length; i++) {
+        final routePoint = routePoints[i];
+        final distance = calculateDistance(
+          waypoint.lat!, 
+          waypoint.lon!, 
+          routePoint.latitude, 
+          routePoint.longitude
+        );
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestPointIndex = i;
+        }
+      }
+      
+      // Skip waypoints more than 100m from the route
+      if (minDistance > 100) continue;
+      
+      // Find the distance along the route to this point
+      double distanceAlongRoute = 0.0;
+      
+      // Map route point index to corresponding elevation point
+      double routeDistance;
+      
+      if (closestPointIndex == 0) {
+        routeDistance = 0.0;
+      } else if (elevationPoints.length == routePoints.length) {
+        // Direct mapping if arrays have the same length
+        routeDistance = elevationPoints[closestPointIndex].x;
+      } else {
+        // Otherwise use proportional mapping
+        double ratio = elevationPoints.length / routePoints.length;
+        int elevationIndex = (closestPointIndex * ratio).round();
+        elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
+        routeDistance = elevationPoints[elevationIndex].x;
+      }
+      
+      // Create a new checkpoint
+      final checkpoint = CheckpointData(distance: routeDistance);
+      
+      // Use waypoint name if available
+      // Set waypoint name as a property on the checkpoint (we need to add this field)
+      checkpoint.name = waypoint.name ?? 'Waypoint ${waypointCheckpoints.length + 1}';
+      
+      // Add to our list
+      waypointCheckpoints.add(checkpoint);
+    }
+    
+    // If we found any valid waypoints, enable checkpoints and add them
+    if (waypointCheckpoints.isNotEmpty) {
+      checkpoints = waypointCheckpoints;
+      showCheckpoints = true;
+      
+      // Calculate metrics for the checkpoints
+      _calculateCheckpointMetrics(startIndex: 0);
+    }
   }
 
   int findClosestRoutePoint(Offset localPosition, BoxConstraints constraints) {
@@ -913,150 +994,141 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     double minElevRounded = (minElevation! / 200).floor() * 200;
                     double maxElevRounded = (maxElevation! / 200).ceil() * 200;
                     
-                    return LineChart(
-                      LineChartData(
-                        gridData: const FlGridData(show: true),
-                        borderData: FlBorderData(
-                          show: true,
-                          border: Border.all(color: Colors.grey.shade300, width: 1),
-                        ),
-                        titlesData: FlTitlesData(
-                          bottomTitles: AxisTitles(
-                            axisNameWidget: const Padding(
-                              padding: EdgeInsets.only(top: 12.0),
-                              child: Text(
-                                'Distance (km)',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            axisNameSize: 25,
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 30,
-                              interval: (elevationPoints.last.x / 10).clamp(1, double.infinity),
-                              getTitlesWidget: (value, meta) {
-                                return Text(
-                                  value.toInt().toString(),
-                                  style: const TextStyle(
-                                    fontSize: 10,
+                    return MouseRegion(
+                      onHover: (event) {
+                        if (elevationPoints.isEmpty) return;
+                        
+                        // Convert hover position to chart coordinates
+                        final RenderBox box = context.findRenderObject() as RenderBox;
+                        final localPosition = box.globalToLocal(event.position);
+                        
+                        // Calculate distance based on x position relative to chart width
+                        // Get the actual chart dimensions from the constraints
+                        final double totalWidth = constraints.maxWidth;
+                        
+                        // Define clear left and right offsets
+                        final double leftOffset = 56; // Left padding + axis labels
+                        final double rightOffset = 16; // Right padding
+                        final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
+                        
+                        // Calculate how far along the chart the mouse is (0.0 to 1.0)
+                        final double normalizedX = (localPosition.dx - leftOffset) / chartAreaWidth;
+                        
+                        // Convert to actual distance in km
+                        final double hoverDistance = normalizedX * elevationPoints.last.x;
+                        
+                        // Validate the distance is within chart boundaries
+                        if (normalizedX < 0 || normalizedX > 1) return;
+                        
+                        // Find closest point on elevation chart
+                        final FlSpot hoveredPoint = findClosestElevationPoint(hoverDistance);
+                        final int elevationIndex = _closestElevationPointIndex;
+                        
+                        if (elevationIndex < 0) return;
+                        
+                        // Find corresponding route point for map marker
+                        int routePointIndex = _findRoutePointIndexForDistance(hoveredPoint.x);
+                        
+                        if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
+                        
+                        // Update all state variables in a single setState call
+                        setState(() {
+                          hoveredPointIndex = routePointIndex;
+                          hoveredDistance = hoveredPoint.x;
+                          hoveredSpot = hoveredPoint;
+                        });
+                      },
+                      onExit: (_) {
+                        // Clear hover state when mouse leaves chart
+                        setState(() {
+                          hoveredPointIndex = null;
+                          hoveredDistance = null;
+                          hoveredSpot = null;
+                          _closestElevationPointIndex = -1;
+                        });
+                      },
+                      child: LineChart(
+                        LineChartData(
+                          gridData: const FlGridData(show: true),
+                          borderData: FlBorderData(
+                            show: true,
+                            border: Border.all(color: Colors.grey.shade300, width: 1),
+                          ),
+                          titlesData: FlTitlesData(
+                            bottomTitles: AxisTitles(
+                              axisNameWidget: const Padding(
+                                padding: EdgeInsets.only(top: 12.0),
+                                child: Text(
+                                  'Distance (km)',
+                                  style: TextStyle(
+                                    fontSize: 12,
                                     fontWeight: FontWeight.bold,
                                   ),
-                                );
-                              },
-                            ),
-                          ),
-                          leftTitles: AxisTitles(
-                            axisNameWidget: const Padding(
-                              padding: EdgeInsets.only(bottom: 8.0, right: 8.0),
-                              child: Text(
-                                'Elevation (m)',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            ),
-                            axisNameSize: 40,
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 40,
-                              interval: 200, // Fixed 200m intervals
-                              getTitlesWidget: (value, meta) {
-                                // Only show labels at even 200m intervals
-                                if (value % 200 != 0) {
-                                  return Container();
-                                }
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 8.0),
-                                  child: Text(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 30,
+                                interval: (elevationPoints.last.x / 10).clamp(1, double.infinity),
+                                getTitlesWidget: (value, meta) {
+                                  return Text(
                                     value.toInt().toString(),
                                     style: const TextStyle(
-                                      fontSize: 10, // Same as x-axis
+                                      fontSize: 10,
                                       fontWeight: FontWeight.bold,
                                     ),
+                                  );
+                                },
+                              ),
+                            ),
+                            leftTitles: AxisTitles(
+                              axisNameWidget: const Padding(
+                                padding: EdgeInsets.only(bottom: 8.0, right: 8.0),
+                                child: Text(
+                                  'Elevation (m)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                );
-                              },
-                            ),
-                          ),
-                          rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                        ),
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: elevationPoints,
-                            isCurved: true,
-                            gradient: LinearGradient(
-                              colors: List.generate(
-                                smoothedGradients.length,
-                                (i) => getGradientColor(smoothedGradients[i]),
+                                ),
                               ),
-                              stops: List.generate(
-                                smoothedGradients.length,
-                                (i) => elevationPoints[i].x / elevationPoints.last.x,
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 40,
+                                interval: 200, // Fixed 200m intervals
+                                getTitlesWidget: (value, meta) {
+                                  // Only show labels at even 200m intervals
+                                  if (value % 200 != 0) {
+                                    return Container();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: Text(
+                                      value.toInt().toString(),
+                                      style: const TextStyle(
+                                        fontSize: 10, // Same as x-axis
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
-                              begin: Alignment.centerLeft,
-                              end: Alignment.centerRight,
                             ),
-                            barWidth: 2,
-                            dotData: FlDotData(
-                              show: true,
-                              checkToShowDot: (spot, barData) {
-                                // Show dot for the hovered spot
-                                if (hoveredSpot != null && 
-                                    (spot.x - hoveredSpot!.x).abs() < 0.05 && 
-                                    spot.y == hoveredSpot!.y) {
-                                  return true;
-                                }
-                                
-                                // Show dots for checkpoints
-                                if (showCheckpoints) {
-                                  for (var checkpoint in checkpoints) {
-                                    // Find the closest elevation point to this checkpoint
-                                    FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
-                                    if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
-                                      return true;
-                                    }
-                                  }
-                                }
-                                
-                                return false;
-                              },
-                              getDotPainter: (spot, percent, barData, index) {
-                                // Check if this is a checkpoint dot
-                                bool isCheckpoint = false;
-                                if (showCheckpoints) {
-                                  for (var checkpoint in checkpoints) {
-                                    FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
-                                    if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
-                                      isCheckpoint = true;
-                                      break;
-                                    }
-                                  }
-                                }
-                                
-                                // Use red for checkpoints, blue for hovered spot
-                                return FlDotCirclePainter(
-                                  radius: isCheckpoint ? 6 : 6,
-                                  color: isCheckpoint ? Colors.red : Colors.blue,
-                                  strokeWidth: 2,
-                                  strokeColor: Colors.white,
-                                );
-                              },
+                            rightTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
                             ),
-                            belowBarData: BarAreaData(
-                              show: true,
+                            topTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                          ),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: elevationPoints,
+                              isCurved: true,
                               gradient: LinearGradient(
                                 colors: List.generate(
                                   smoothedGradients.length,
-                                  (i) => getGradientColor(smoothedGradients[i]).withOpacity(0.2),
+                                  (i) => getGradientColor(smoothedGradients[i]),
                                 ),
                                 stops: List.generate(
                                   smoothedGradients.length,
@@ -1065,56 +1137,77 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 begin: Alignment.centerLeft,
                                 end: Alignment.centerRight,
                               ),
+                              barWidth: 2,
+                              dotData: FlDotData(
+                                show: true,
+                                checkToShowDot: (spot, barData) {
+                                  // Show dot for the hovered spot
+                                  if (hoveredSpot != null && 
+                                      (spot.x - hoveredSpot!.x).abs() < 0.05 && 
+                                      spot.y == hoveredSpot!.y) {
+                                    return true;
+                                  }
+                                  
+                                  // Show dots for checkpoints
+                                  if (showCheckpoints) {
+                                    for (var checkpoint in checkpoints) {
+                                      // Find the closest elevation point to this checkpoint
+                                      FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                      if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                        return true;
+                                      }
+                                    }
+                                  }
+                                  
+                                  return false;
+                                },
+                                getDotPainter: (spot, percent, barData, index) {
+                                  // Check if this is a checkpoint dot
+                                  bool isCheckpoint = false;
+                                  if (showCheckpoints) {
+                                    for (var checkpoint in checkpoints) {
+                                      FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                      if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                        isCheckpoint = true;
+                                        break;
+                                      }
+                                    }
+                                  }
+                                  
+                                  // Use red for checkpoints, blue for hovered spot
+                                  return FlDotCirclePainter(
+                                    radius: isCheckpoint ? 6 : 6,
+                                    color: isCheckpoint ? Colors.red : Colors.blue,
+                                    strokeWidth: 2,
+                                    strokeColor: Colors.white,
+                                  );
+                                },
+                              ),
+                              belowBarData: BarAreaData(
+                                show: true,
+                                gradient: LinearGradient(
+                                  colors: List.generate(
+                                    smoothedGradients.length,
+                                    (i) => getGradientColor(smoothedGradients[i]).withOpacity(0.2),
+                                  ),
+                                  stops: List.generate(
+                                    smoothedGradients.length,
+                                    (i) => elevationPoints[i].x / elevationPoints.last.x,
+                                  ),
+                                  begin: Alignment.centerLeft,
+                                  end: Alignment.centerRight,
+                                ),
+                              ),
                             ),
+                          ],
+                          minY: minElevRounded, // Use rounded value for even intervals
+                          maxY: maxElevRounded, // Use rounded value for even intervals
+                          minX: 0,
+                          maxX: elevationPoints.last.x,
+                          lineTouchData: LineTouchData(
+                            enabled: false, // Disable built-in hover interactions
                           ),
-                        ],
-                        minY: minElevRounded, // Use rounded value for even intervals
-                        maxY: maxElevRounded, // Use rounded value for even intervals
-                        minX: 0,
-                        maxX: elevationPoints.last.x,
-                        lineTouchData: LineTouchData(
-                          enabled: true,
-                          touchTooltipData: LineTouchTooltipData(
-                            getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
-                              // Return a list of tooltip items with the same length as touchedBarSpots
-                              return touchedBarSpots.map((touchedBarSpot) {
-                                // Return null for each item to hide the tooltip
-                                return null;
-                              }).toList();
-                            },
-                          ),
-                          getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
-                            return spotIndexes.map((spotIndex) {
-                              return TouchedSpotIndicatorData(
-                                FlLine(
-                                  color: Colors.white.withOpacity(0.5),
-                                  strokeWidth: 1,
-                                  dashArray: [5, 5],
-                                ),
-                                FlDotData(
-                                  show: true,
-                                  getDotPainter: (spot, percent, barData, index) {
-                                    return FlDotCirclePainter(
-                                      radius: 4,
-                                      color: getGradientColor(smoothedGradients[spotIndex]),
-                                      strokeWidth: 2,
-                                      strokeColor: Colors.white,
-                                    );
-                                  },
-                                ),
-                              );
-                            }).toList();
-                          },
-                          handleBuiltInTouches: true,
-                          mouseCursorResolver: (FlTouchEvent event, LineTouchResponse? response) {
-                            return SystemMouseCursors.click;
-                          },
                         ),
-                        extraLinesData: ExtraLinesData(
-                          verticalLines: [],
-                        ),
-                        // Remove the showingTooltipIndicators property
-                        showingTooltipIndicators: [],
                       ),
                     );
                   },
@@ -1146,6 +1239,20 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     if (showCheckpoints) ...[
                       const SizedBox(height: 16),
                       
+                      // Export button
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: checkpoints.isEmpty ? null : exportCheckpointsToExcel,
+                            icon: const Icon(Icons.file_download),
+                            label: const Text('Export to Excel'),
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 8),
+                      
                       // Table header
                       Container(
                         decoration: BoxDecoration(
@@ -1158,6 +1265,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                         child: Row(
                           children: [
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                'Name',
+                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                             Expanded(
                               flex: 2,
                               child: Text(
@@ -1243,6 +1359,26 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                               child: Row(
                                 children: [
+                                  // Name field (editable)
+                                  Expanded(
+                                    flex: 3,
+                                    child: TextFormField(
+                                      key: ValueKey('checkpoint_name_${checkpoint.id}'),
+                                      initialValue: checkpoint.name ?? '',
+                                      decoration: const InputDecoration(
+                                        isDense: true,
+                                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                        border: OutlineInputBorder(),
+                                        hintText: 'Enter name',
+                                      ),
+                                      onChanged: (value) {
+                                        setState(() {
+                                          checkpoint.name = value;
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                  
                                   // Distance (editable)
                                   Expanded(
                                     flex: 2,
@@ -1663,6 +1799,140 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       } else {
         checkpoint.timeFromPrevious = checkpoint.cumulativeTime;
       }
+    }
+  }
+
+  // Export checkpoints to Excel file
+  Future<void> exportCheckpointsToExcel() async {
+    if (checkpoints.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No checkpoints to export')),
+      );
+      return;
+    }
+    
+    try {
+      // Create a new Excel workbook
+      final excel = xl.Excel.createExcel();
+      
+      // Delete the default sheet and create a new one
+      excel.delete('Sheet1');
+      final sheet = excel['Checkpoints'];
+      
+      // Add headers
+      final headers = [
+        'Name', 
+        'Distance (km)', 
+        'Elevation (m)', 
+        'Elevation Gain (m)',
+        'Elevation Loss (m)',
+        'Total Time',
+        'Segment Time',
+      ];
+      
+      for (int i = 0; i < headers.length; i++) {
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = 
+            xl.TextCellValue(headers[i]);
+      }
+      
+      // Add checkpoint data
+      for (int i = 0; i < checkpoints.length; i++) {
+        final checkpoint = checkpoints[i];
+        
+        // Name
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: i+1)).value = 
+            xl.TextCellValue(checkpoint.name ?? '');
+        
+        // Distance
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: i+1)).value = 
+            xl.DoubleCellValue(checkpoint.distance);
+        
+        // Elevation
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i+1)).value = 
+            xl.DoubleCellValue(checkpoint.elevation);
+        
+        // Elevation Gain
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i+1)).value = 
+            xl.DoubleCellValue(checkpoint.elevationGain);
+        
+        // Elevation Loss
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i+1)).value = 
+            xl.DoubleCellValue(checkpoint.elevationLoss);
+        
+        // Total Time (formatted)
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: i+1)).value = 
+            xl.TextCellValue(_formatTotalTime(checkpoint.cumulativeTime));
+        
+        // Segment Time (formatted)
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i+1)).value = 
+            xl.TextCellValue(_formatTotalTime(checkpoint.timeFromPrevious));
+      }
+      
+      // Get the filename
+      const String defaultFilename = 'route_checkpoints.xlsx';
+      
+      // Check if we're on the web platform
+      if (kIsWeb) {
+        // On web platforms, the Excel package's save method will trigger
+        // a download in the browser
+        excel.save(fileName: defaultFilename);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Downloading checkpoint data')),
+        );
+        return;
+      } 
+      
+      // For native platforms
+      String? outputFile;
+      try {
+        // Try to use FilePicker to get save location from user
+        outputFile = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save checkpoint data',
+          fileName: defaultFilename,
+          type: FileType.custom,
+          allowedExtensions: ['xlsx'],
+        );
+        
+        if (outputFile == null) {
+          // User cancelled the save dialog
+          return;
+        }
+        
+        // Ensure the file has the correct extension
+        if (!outputFile.endsWith('.xlsx')) {
+          outputFile += '.xlsx';
+        }
+      } catch (e) {
+        // FilePicker's saveFile isn't implemented on all platforms
+        // Show error and return
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open save dialog: $e')),
+        );
+        return;
+      }
+      
+      // Save the Excel file to disk (only for native platforms)
+      final fileBytes = excel.save();
+      if (fileBytes != null) {
+        try {
+          File(outputFile)
+            ..createSync(recursive: true)
+            ..writeAsBytesSync(fileBytes);
+            
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Exported checkpoints to $outputFile')),
+          );
+        } catch (e) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error saving file: $e')),
+          );
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting checkpoints: $e')),
+      );
     }
   }
 } 
