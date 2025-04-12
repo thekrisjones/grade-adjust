@@ -194,7 +194,7 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
     double speedKmPerHour = secsPerHour / realPaceSeconds;
     
     // Calculate vertical speed in m/h
-    double verticalPaceMetersPerHour = (speedKmPerHour / 100) * gradient * 1000;
+    double verticalPaceMetersPerHour = speedKmPerHour * gradient * 10;
 
     // Convert to ft/h if necessary
     if (selectedUnit == PaceUnit.minPerMile || selectedUnit == PaceUnit.mph) {
@@ -625,45 +625,48 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
               ),
               const SizedBox(height: 32),
               
-              // Vertical Pace Display
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                ),
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Icon(Icons.trending_up, color: Colors.blue.shade700),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Vertical Pace',
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${calculateVerticalPace().toStringAsFixed(0)} ${selectedUnit == PaceUnit.minPerMile || selectedUnit == PaceUnit.mph ? 'ft/h' : 'm/h'}',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Colors.blue.shade700,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+              // Results Display (using Card and _buildResultRow for consistency)
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: _buildResultRow(
+                    icon: Icons.trending_up,
+                    label: 'Vertical Pace',
+                    value: calculateVerticalPace().toStringAsFixed(0),
+                    unit: selectedUnit == PaceUnit.minPerMile || selectedUnit == PaceUnit.mph ? 'ft/h' : 'm/h',
+                    context: context,
+                  ),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // Helper to build result rows for consistent styling (copied from Stairs)
+  Widget _buildResultRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required String unit,
+    required BuildContext context,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, color: Theme.of(context).colorScheme.primary, size: 20),
+          const SizedBox(width: 12),
+          Text('$label:', style: Theme.of(context).textTheme.titleMedium),
+          const Spacer(),
+          Text(
+            '$value $unit',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }

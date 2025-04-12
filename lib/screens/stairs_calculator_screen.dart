@@ -268,11 +268,6 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
               const SizedBox(height: 32),
 
               // Results Section
-              Text(
-                'Results',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
               Card(
                 elevation: 2,
                 child: Padding(

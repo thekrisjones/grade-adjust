@@ -848,55 +848,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                 ),
               ),
               
-              // Add instruction for checkpoint creation if pending
-              if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
-                  margin: const EdgeInsets.symmetric(horizontal: 16.0),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade100,
-                    borderRadius: BorderRadius.circular(8.0),
-                    border: Border.all(color: Colors.blue.shade300),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Add checkpoint at ${_pendingCheckpointDistance!.toStringAsFixed(2)} km?',
-                          style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          if (mounted) {
-                            // Confirm the checkpoint
-                            _createCheckpointAtDistance(_pendingCheckpointDistance!);
-                            setState(() {
-                              _isPendingCheckpointCreation = false;
-                              _pendingCheckpointDistance = null;
-                            });
-                          }
-                        },
-                        child: const Text('Confirm'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _isPendingCheckpointCreation = false;
-                            _pendingCheckpointDistance = null;
-                          });
-                        },
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                ),
-              
               // Map with reduced height
               SizedBox(
-                height: 225, // Reduced from 300 to 75% of original size
+                height: 225,
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     // Calculate container width based on available space
@@ -1308,6 +1262,51 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                 ),
               ),
               
+              // Add instruction for checkpoint creation if pending (MOVED HERE)
+              if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+                  margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0), // Added vertical margin
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade100,
+                    borderRadius: BorderRadius.circular(8.0),
+                    border: Border.all(color: Colors.blue.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Add checkpoint at ${_pendingCheckpointDistance!.toStringAsFixed(2)} km?',
+                          style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          if (mounted) {
+                            _createCheckpointAtDistance(_pendingCheckpointDistance!);
+                            setState(() {
+                              _isPendingCheckpointCreation = false;
+                              _pendingCheckpointDistance = null;
+                            });
+                          }
+                        },
+                        child: const Text('Confirm'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _isPendingCheckpointCreation = false;
+                            _pendingCheckpointDistance = null;
+                          });
+                        },
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ),
+              
               // Route Summary Section with bar charts
               if (routePoints.isNotEmpty) ...[
                 Padding(
@@ -1454,300 +1453,314 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       
                       const SizedBox(height: 8),
                       
-                      // Table header
-                      Container(
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(8),
-                            topRight: Radius.circular(8),
-                          ),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Name',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Distance (km)',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Elevation (m)',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Elev. Gain (m)',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Elev. Loss (m)',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Total Time',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              flex: 2,
-                              child: Text(
-                                'Segment Time',
-                                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            // Add Real Time column if start time is set
-                            if (startTime != null)
-                              Expanded(
-                                flex: 2,
-                                child: Text(
-                                  'Real Time',
-                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
+                      // Wrap the table structure in a horizontal scroll view
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          // Set a minimum width to ensure columns don't wrap and scrolling is enabled
+                          constraints: const BoxConstraints(minWidth: 1200), 
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Table header
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(8),
+                                    topRight: Radius.circular(8),
                                   ),
                                 ),
-                              ),
-                            const SizedBox(width: 110), // Space for delete and pace adjustment buttons
-                          ],
-                        ),
-                      ),
-                      
-                      // Table rows
-                      Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: const BorderRadius.only(
-                            bottomLeft: Radius.circular(8),
-                            bottomRight: Radius.circular(8),
-                          ),
-                        ),
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: checkpoints.length,
-                          itemBuilder: (context, index) {
-                            final checkpoint = checkpoints[index];
-                            return Container(
-                              decoration: BoxDecoration(
-                                border: Border(
-                                  bottom: index < checkpoints.length - 1
-                                      ? BorderSide(color: Colors.grey.shade300)
-                                      : BorderSide.none,
-                                ),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                              child: Row(
-                                children: [
-                                  // Name field (editable)
-                                  Expanded(
-                                    flex: 2,
-                                    child: TextFormField(
-                                      key: ValueKey('checkpoint_name_${checkpoint.id}'),
-                                      focusNode: _nameFocusNodes[index],
-                                      initialValue: checkpoint.name ?? '',
-                                      decoration: const InputDecoration(
-                                        isDense: true,
-                                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Enter name',
-                                      ),
-                                      onChanged: (value) {
-                                        setState(() {
-                                          checkpoint.name = value;
-                                        });
-                                      },
-                                      onTap: () {
-                                        setState(() {
-                                          _editingCheckpointId = checkpoint.id;
-                                          _isEditingName = true;
-                                        });
-                                      },
-                                      onFieldSubmitted: (_) {
-                                        setState(() {
-                                          _isEditingName = false;
-                                          _editingCheckpointId = null;
-                                        });
-                                        _processCheckpointChanges();
-                                      },
-                                      onEditingComplete: () {
-                                        setState(() {
-                                          _isEditingName = false;
-                                          _editingCheckpointId = null;
-                                        });
-                                        _processCheckpointChanges();
-                                      },
-                                    ),
-                                  ),
-                                  
-                                  // Distance (editable)
-                                  Expanded(
-                                    flex: 2,
-                                    child: TextFormField(
-                                      key: ValueKey('checkpoint_${checkpoint.id}'),
-                                      focusNode: _distanceFocusNodes[index],
-                                      initialValue: checkpoint.distance > 0
-                                          ? checkpoint.distance.toStringAsFixed(1)
-                                          : '',
-                                      decoration: const InputDecoration(
-                                        isDense: true,
-                                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                                        border: OutlineInputBorder(),
-                                        hintText: 'Enter km',
-                                      ),
-                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                      onChanged: (value) {
-                                        // Try to parse the value, but don't update if it's not a valid number
-                                        double? distance = double.tryParse(value);
-                                        if (distance != null) {
-                                          updateCheckpointDistance(index, distance);
-                                        }
-                                      },
-                                      onTap: () {
-                                        setState(() {
-                                          _editingCheckpointId = checkpoint.id;
-                                          _isEditingDistance = true;
-                                        });
-                                      },
-                                      onFieldSubmitted: (_) {
-                                        setState(() {
-                                          _isEditingDistance = false;
-                                          _editingCheckpointId = null;
-                                        });
-                                        _processCheckpointChanges();
-                                      },
-                                      onEditingComplete: () {
-                                        setState(() {
-                                          _isEditingDistance = false;
-                                          _editingCheckpointId = null;
-                                        });
-                                        _processCheckpointChanges();
-                                      },
-                                    ),
-                                  ),
-                                  
-                                  // Elevation (read-only)
-                                  Expanded(
-                                    flex: 2,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    Container( // Name column
+                                      width: 150,
                                       child: Text(
-                                        checkpoint.elevation.toStringAsFixed(0),
+                                        'Name',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  
-                                  // Elevation Gain (read-only)
-                                  Expanded(
-                                    flex: 2,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    Container( // Distance column
+                                      width: 110,
                                       child: Text(
-                                        checkpoint.elevationGain.toStringAsFixed(0),
+                                        'Distance (km)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  
-                                  // Elevation Loss (read-only)
-                                  Expanded(
-                                    flex: 2,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    Container( // Elevation column
+                                      width: 110,
                                       child: Text(
-                                        checkpoint.elevationLoss.toStringAsFixed(0),
+                                        'Elevation (m)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  
-                                  // Cumulative Time (read-only)
-                                  Expanded(
-                                    flex: 2,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    Container( // Elev. Gain column
+                                      width: 110,
                                       child: Text(
-                                        _formatTotalTime(checkpoint.cumulativeTime),
+                                        'Elev. Gain (m)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  
-                                  // Time from Previous (read-only)
-                                  Expanded(
-                                    flex: 2,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    Container( // Elev. Loss column
+                                      width: 110,
                                       child: Text(
-                                        _formatTotalTime(checkpoint.timeFromPrevious),
+                                        'Elev. Loss (m)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  
-                                  // Add Real Time column if start time is set
-                                  if (startTime != null)
-                                    Expanded(
-                                      flex: 2,
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    Container( // Total Time column
+                                      width: 100,
+                                      child: Text(
+                                        'Total Time',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    Container( // Segment Time column
+                                      width: 110,
+                                      child: Text(
+                                        'Segment Time',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    // Add Real Time column if start time is set
+                                    if (startTime != null) 
+                                      Container( // Real Time column
+                                        width: 100,
                                         child: Text(
-                                          _formatRealTime(checkpoint.cumulativeTime),
-                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                          'Real Time',
+                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  
-                                  // Control buttons - adjust pace and delete
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // Delete button
-                                      SizedBox(
-                                        width: 40,
-                                        child: IconButton(
-                                          icon: const Icon(Icons.delete, size: 20),
-                                          onPressed: () => removeCheckpoint(index),
-                                          color: Colors.red,
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    const SizedBox(width: 60), // Space for delete button
+                                  ],
+                                ),
                               ),
-                            );
-                          },
-                        ),
-                      ),
+                              
+                              // Table rows - Replace ListView.builder with Column
+                              Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.grey.shade300),
+                                  borderRadius: const BorderRadius.only(
+                                    bottomLeft: Radius.circular(8),
+                                    bottomRight: Radius.circular(8),
+                                  ),
+                                ),
+                                // Use a Column instead of ListView.builder
+                                child: Column( 
+                                  children: List.generate(checkpoints.length, (index) {
+                                    final checkpoint = checkpoints[index];
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        border: Border(
+                                          bottom: index < checkpoints.length - 1
+                                              ? BorderSide(color: Colors.grey.shade300)
+                                              : BorderSide.none,
+                                        ),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                                      child: Row(
+                                        children: [
+                                          // Name field (editable)
+                                          Container(
+                                            width: 150,
+                                            child: TextFormField(
+                                              key: ValueKey('checkpoint_name_${checkpoint.id}'),
+                                              focusNode: _nameFocusNodes[index],
+                                              initialValue: checkpoint.name ?? '',
+                                              decoration: const InputDecoration(
+                                                isDense: true,
+                                                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                border: OutlineInputBorder(),
+                                                hintText: 'Enter name',
+                                              ),
+                                              onChanged: (value) {
+                                                setState(() {
+                                                  checkpoint.name = value;
+                                                });
+                                              },
+                                              onTap: () {
+                                                setState(() {
+                                                  _editingCheckpointId = checkpoint.id;
+                                                  _isEditingName = true;
+                                                });
+                                              },
+                                              onFieldSubmitted: (_) {
+                                                setState(() {
+                                                  _isEditingName = false;
+                                                  _editingCheckpointId = null;
+                                                });
+                                                _processCheckpointChanges();
+                                              },
+                                              onEditingComplete: () {
+                                                setState(() {
+                                                  _isEditingName = false;
+                                                  _editingCheckpointId = null;
+                                                });
+                                                _processCheckpointChanges();
+                                              },
+                                            ),
+                                          ),
+                                          
+                                          // Distance (editable)
+                                          Container(
+                                            width: 110,
+                                            child: TextFormField(
+                                              key: ValueKey('checkpoint_${checkpoint.id}'),
+                                              focusNode: _distanceFocusNodes[index],
+                                              initialValue: checkpoint.distance > 0
+                                                  ? checkpoint.distance.toStringAsFixed(1)
+                                                  : '',
+                                              decoration: const InputDecoration(
+                                                isDense: true,
+                                                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                border: OutlineInputBorder(),
+                                                hintText: 'Enter km',
+                                              ),
+                                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                              onChanged: (value) {
+                                                // Try to parse the value, but don't update if it's not a valid number
+                                                double? distance = double.tryParse(value);
+                                                if (distance != null) {
+                                                  updateCheckpointDistance(index, distance);
+                                                }
+                                              },
+                                              onTap: () {
+                                                setState(() {
+                                                  _editingCheckpointId = checkpoint.id;
+                                                  _isEditingDistance = true;
+                                                });
+                                              },
+                                              onFieldSubmitted: (_) {
+                                                setState(() {
+                                                  _isEditingDistance = false;
+                                                  _editingCheckpointId = null;
+                                                });
+                                                _processCheckpointChanges();
+                                              },
+                                              onEditingComplete: () {
+                                                setState(() {
+                                                  _isEditingDistance = false;
+                                                  _editingCheckpointId = null;
+                                                });
+                                                _processCheckpointChanges();
+                                              },
+                                            ),
+                                          ),
+                                          
+                                          // Elevation (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                checkpoint.elevation.toStringAsFixed(0),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Elevation Gain (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                checkpoint.elevationGain.toStringAsFixed(0),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Elevation Loss (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                checkpoint.elevationLoss.toStringAsFixed(0),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Cumulative Time (read-only)
+                                          Container(
+                                            width: 100,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                _formatTotalTime(checkpoint.cumulativeTime),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Time from Previous (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                _formatTotalTime(checkpoint.timeFromPrevious),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Add Real Time column if start time is set
+                                          if (startTime != null)
+                                            Container( // Real Time column
+                                              width: 100,
+                                              child: Padding(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                child: Text(
+                                                  _formatRealTime(checkpoint.cumulativeTime),
+                                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                            ),
+                                          
+                                          // Control buttons - adjust pace and delete
+                                          Container( // Actions column
+                                            width: 60,
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                // Delete button
+                                                SizedBox(
+                                                  width: 40,
+                                                  child: IconButton(
+                                                    icon: const Icon(Icons.delete, size: 20),
+                                                    onPressed: () => removeCheckpoint(index),
+                                                    color: Colors.red,
+                                                    padding: EdgeInsets.zero,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }), // End of List.generate
+                                ), // End of Column
+                              ), // End of Container for rows
+                            ],
+                          ), // End of inner Column
+                        ), // End of ConstrainedBox
+                      ), // End of SingleChildScrollView
                       
                       // Add checkpoint button
                       Padding(
@@ -2815,24 +2828,26 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         ),
         const SizedBox(height: 8),
         Container(
-          height: 200,
+          // Adjust height dynamically based on potential wrapping
+          // Let Wrap handle the height, or set a flexible height if needed.
+          // height: 200, 
           padding: const EdgeInsets.all(8.0),
           child: data.isEmpty
               ? const Center(child: Text('No data available'))
-              : ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: data.length,
-                  itemBuilder: (context, index) {
-                    final item = data[index];
-                    
+              : Wrap(
+                  spacing: 8.0, // Horizontal space between bars
+                  runSpacing: 16.0, // Vertical space between rows of bars
+                  alignment: WrapAlignment.center, // Center the bars horizontally
+                  children: data.map((item) {
                     // Check if this is a special message (no data, insufficient data)
                     bool isSpecialMessage = item.category.contains('No ') || 
                                            item.category.contains('Insufficient');
                     
                     // Special handling for message items
                     if (isSpecialMessage) {
+                      // Make message containers flexible too
                       return Container(
-                        width: 120,
+                        constraints: const BoxConstraints(minHeight: 180), // Ensure minimum height
                         padding: const EdgeInsets.all(8),
                         alignment: Alignment.center,
                         child: Text(
@@ -2849,40 +2864,39 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     
                     // Normal bar chart item
                     final normalizedHeight = maxValue > 0 ? item.value / maxValue : 0;
+                    final barHeight = max(20.0, 160 * normalizedHeight.toDouble());
                     
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    // Use a fixed-size container for each bar element
+                    return SizedBox(
+                      width: 75, // Keep bar width
+                      height: 180, // Set a fixed height for the column including text
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.end, // Align bottom of bar to bottom
                         children: [
-                          Expanded(
-                            child: Container(
-                              width: 75,
-                              alignment: Alignment.bottomCenter,
-                              child: Container(
-                                width: 75,
-                                height: max(20, 160 * normalizedHeight.toDouble()),
-                                decoration: BoxDecoration(
-                                  color: color.withOpacity(0.7),
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(4),
-                                  ),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  '${item.value.toInt()}min',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                          Container(
+                            width: 75,
+                            height: barHeight,
+                            decoration: BoxDecoration(
+                              color: color.withOpacity(0.7),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(4),
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              '${item.value.toInt()}min',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
                           const SizedBox(height: 6),
                           SizedBox(
                             width: 75,
+                            // Allow text to take needed height within the fixed column height
                             child: Text(
                               item.category,
                               style: const TextStyle(fontSize: 10),
@@ -2894,7 +2908,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         ],
                       ),
                     );
-                  },
+                  }).toList(),
                 ),
         ),
       ],
