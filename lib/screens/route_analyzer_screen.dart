@@ -5,11 +5,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:math' show sin, cos, sqrt, atan2, max, min, pow, exp, pi, Point;
-import 'dart:async'; // Add timer import for debounce
+import 'dart:async';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
-import 'package:excel/excel.dart' as xl; // Import Excel library with prefix
-import 'package:flutter/foundation.dart' show kIsWeb; // For web platform detection
-import 'dart:io'; // For file operations on native platforms
+import 'package:excel/excel.dart' as xl;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:io';
 
 // Class to store checkpoint data
 class CheckpointData {
@@ -21,6 +21,8 @@ class CheckpointData {
   double timeFromPrevious = 0;
   String id = DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
   String? name;
+  // Base grade adjusted pace for the segment ending at this checkpoint
+  double baseGradeAdjustedPace = 0;
 
   CheckpointData({required this.distance});
   
@@ -34,8 +36,17 @@ class CheckpointData {
     cp.timeFromPrevious = timeFromPrevious;
     cp.id = id;
     cp.name = name;
+    cp.baseGradeAdjustedPace = baseGradeAdjustedPace;
     return cp;
   }
+}
+
+// Class to store chart data for the summary section
+class ChartData {
+  final String category;
+  final double value;
+  
+  ChartData(this.category, this.value);
 }
 
 class RouteAnalyzerScreen extends StatefulWidget {
@@ -64,14 +75,33 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   final mapController = MapController();
   List<double> smoothedGradients = [];
   
+  // Add state for start time
+  TimeOfDay? startTime;
+  
+  // Add state for pending checkpoint creation
+  bool _isPendingCheckpointCreation = false;
+  double? _pendingCheckpointDistance;
+  
   // Checkpoint-related state
   bool showCheckpoints = false;
   List<CheckpointData> checkpoints = [];
+  // Add state to track which fields are being edited
+  String? _editingCheckpointId;
+  bool _isEditingName = false;
+  bool _isEditingDistance = false;
+  // Add focus nodes for the text fields - make them nullable
+  final List<FocusNode> _nameFocusNodes = [];
+  final List<FocusNode> _distanceFocusNodes = [];
+  // Add a flag to prevent web-related focus errors
+  final bool _isWeb = kIsWeb;
   
   // Pace-related state
   double selectedPaceSeconds = 240; // Default 4:00 (240 seconds)
   static const double minPaceSeconds = 165; // 2:45
   static const double maxPaceSeconds = 900; // 15:00
+  // Add minimum allowed segment pace (2:00 min/km)
+  static const double minSegmentPace = 120; // 2:00 min/km
+  // Remove the flag to show adjusted pace column
 
   String formatPace(double seconds) {
     int mins = (seconds / 60).floor();
@@ -95,6 +125,26 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     List<FlSpot> newTimePoints = [];
     double cumulativeTime = 0;
     
+    // Get segment boundaries based on checkpoints
+    List<double> segmentBoundaries = [];
+    if (checkpoints.isNotEmpty) {
+      segmentBoundaries = checkpoints.map((cp) => cp.distance).toList();
+      segmentBoundaries.sort();
+    }
+    
+    // First, calculate the base grade-adjusted pace for each segment
+    if (checkpoints.isNotEmpty) {
+      // Calculate for start to first checkpoint
+      checkpoints[0].baseGradeAdjustedPace = getSegmentBaseGradeAdjustedPace(0, checkpoints[0].distance);
+      
+      // Calculate for checkpoint to checkpoint segments
+      for (int i = 1; i < checkpoints.length; i++) {
+        double startDist = checkpoints[i-1].distance;
+        double endDist = checkpoints[i].distance;
+        checkpoints[i].baseGradeAdjustedPace = getSegmentBaseGradeAdjustedPace(startDist, endDist);
+      }
+    }
+    
     for (int i = 0; i < elevationPoints.length; i++) {
       if (i == 0) {
         newTimePoints.add(FlSpot(0, 0));
@@ -107,11 +157,17 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       // Get grade adjustment factor for this segment
       double adjustment = calculateGradeAdjustment(smoothedGradients[i]);
       
-      // Calculate real pace for this segment (in seconds per km)
-      double realPace = selectedPaceSeconds * adjustment;
+      // Calculate pace for this segment (in seconds per km)
+      double basePace = selectedPaceSeconds;
+      
+      // Apply grade adjustment
+      double gradePace = basePace * adjustment;
+      
+      // Ensure pace doesn't go below minimum allowed pace (2:00 min/km)
+      gradePace = max(gradePace, minSegmentPace);
       
       // Calculate time for this segment
-      double segmentTime = (segmentDistance * realPace) / 60; // Convert to minutes
+      double segmentTime = (segmentDistance * gradePace) / 60; // Convert to minutes
       cumulativeTime += segmentTime;
       
       newTimePoints.add(FlSpot(elevationPoints[i].x, cumulativeTime));
@@ -119,6 +175,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
     setState(() {
       timePoints = newTimePoints;
+      // Ensure summary data is updated when pace changes
+      if (mounted) {
+        // Using a post-frame callback to avoid setState inside another setState
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {}); // Force rebuild for summary charts
+          }
+        });
+      }
     });
   }
 
@@ -153,10 +218,53 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (result != null) {
       try {
         final fileContent = String.fromCharCodes(result.files.first.bytes!);
-        gpxData = GpxReader().fromString(fileContent);
-        processGpxData();
+        
+        try {
+          gpxData = GpxReader().fromString(fileContent);
+          
+          // Verify that the GPX data contains valid tracks
+          if (gpxData?.trks.isEmpty ?? true) {
+            throw FormatException('No track data found in the GPX file');
+          }
+          
+          // Verify at least one track segment has points
+          bool hasPoints = false;
+          for (var track in gpxData!.trks) {
+            for (var segment in track.trksegs) {
+              if (segment.trkpts.isNotEmpty) {
+                hasPoints = true;
+                break;
+              }
+            }
+            if (hasPoints) break;
+          }
+          
+          if (!hasPoints) {
+            throw FormatException('No track points found in the GPX file');
+          }
+          
+          processGpxData();
+        } on FormatException catch (e) {
+          debugPrint('GPX format error: $e');
+          // Show error message to user
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error parsing GPX file: ${e.message}'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       } catch (e) {
-        debugPrint('Error processing GPX file: $e');
+        debugPrint('Error reading GPX file: $e');
+        // Show error message to user
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error reading GPX file: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
       }
     }
   }
@@ -172,7 +280,27 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       }
     }
 
-    if (points.isEmpty) return;
+    if (points.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The GPX file contains no valid track points'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    // Check if file has elevation data
+    bool hasElevationData = points.any((pt) => pt.ele != null);
+    if (!hasElevationData) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The GPX file does not contain elevation data. Using 0m as default elevation.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 5),
+        ),
+      );
+    }
 
     setState(() {
       // Reset all data
@@ -199,8 +327,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           .toList();
 
       // Process first elevation point
-      if (points.isNotEmpty && points[0].ele != null) {
-        elevationPoints.add(FlSpot(0, points[0].ele!));
+      if (points.isNotEmpty) {
+        // Use 0 as default elevation if data is missing
+        double elevation = points[0].ele ?? 0;
+        elevationPoints.add(FlSpot(0, elevation));
         cumulativeElevationGain.add(0);
         cumulativeElevationLoss.add(0);
       }
@@ -212,7 +342,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       double totalElevationLoss = 0;
       
       for (int i = 1; i < points.length; i++) {
-        if (points[i].ele == null || points[i-1].ele == null) continue;
+        // Use 0 as default elevation if data is missing
+        double prevElevation = points[i-1].ele ?? 0;
+        double currentElevation = points[i].ele ?? 0;
 
         // Calculate distance between current point and previous point
         double distanceInMeters = calculateDistance(
@@ -228,7 +360,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         cumulativeDistance += distanceInMeters / 1000.0; // Convert to kilometers
         
         // Calculate elevation change
-        double elevationChange = points[i].ele! - points[i-1].ele!;
+        double elevationChange = currentElevation - prevElevation;
         if (elevationChange > 0) {
           totalElevationGain += elevationChange;
         } else {
@@ -236,7 +368,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         }
         
         // Add point with cumulative distance and elevation
-        elevationPoints.add(FlSpot(cumulativeDistance, points[i].ele!));
+        elevationPoints.add(FlSpot(cumulativeDistance, currentElevation));
         cumulativeElevationGain.add(totalElevationGain);
         cumulativeElevationLoss.add(totalElevationLoss);
       }
@@ -397,7 +529,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   Color getGradientColor(double gradient) {
-    const maxGradient = 15.0; // Maximum gradient percentage to consider
+    const maxGradient = 25.0; // Maximum gradient percentage to consider
     double normalizedGradient = (gradient / maxGradient).clamp(-1.0, 1.0);
     
     if (gradient > 0) {
@@ -530,11 +662,56 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
   void dispose() {
     _mapDebounceTimer?.cancel();
     _chartDebounceTimer?.cancel();
-    _checkpointUpdateTimer?.cancel(); // Cancel the checkpoint update timer
+    _checkpointUpdateTimer?.cancel();
+    // Dispose all focus nodes - with null safety check
+    if (!_isWeb) {
+      for (var node in _nameFocusNodes) {
+        try {
+          node.removeListener(_onFocusChange);
+          node.dispose();
+        } catch (e) {
+          // Silently handle any disposal errors
+        }
+      }
+      for (var node in _distanceFocusNodes) {
+        try {
+          node.removeListener(_onFocusChange);
+          node.dispose();
+        } catch (e) {
+          // Silently handle any disposal errors
+        }
+      }
+    }
     super.dispose();
+  }
+
+  // Handle focus changes to update the table when clicking away - with web safety
+  void _onFocusChange() {
+    if (_isWeb) return; // Skip focus change handling on web platforms
+
+    if (_isEditingName && !_nameFocusNodes.any((node) => node.hasFocus)) {
+      setState(() {
+        _isEditingName = false;
+        _editingCheckpointId = null;
+      });
+      _processCheckpointChanges();
+    }
+    
+    if (_isEditingDistance && !_distanceFocusNodes.any((node) => node.hasFocus)) {
+      setState(() {
+        _isEditingDistance = false;
+        _editingCheckpointId = null;
+      });
+      _processCheckpointChanges();
+    }
   }
 
   @override
@@ -670,316 +847,225 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   ],
                 ),
               ),
+              
+              // Add instruction for checkpoint creation if pending
+              if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+                  margin: const EdgeInsets.symmetric(horizontal: 16.0),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade100,
+                    borderRadius: BorderRadius.circular(8.0),
+                    border: Border.all(color: Colors.blue.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Add checkpoint at ${_pendingCheckpointDistance!.toStringAsFixed(2)} km?',
+                          style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          if (mounted) {
+                            // Confirm the checkpoint
+                            _createCheckpointAtDistance(_pendingCheckpointDistance!);
+                            setState(() {
+                              _isPendingCheckpointCreation = false;
+                              _pendingCheckpointDistance = null;
+                            });
+                          }
+                        },
+                        child: const Text('Confirm'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _isPendingCheckpointCreation = false;
+                            _pendingCheckpointDistance = null;
+                          });
+                        },
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ),
+              
               // Map with reduced height
               SizedBox(
                 height: 225, // Reduced from 300 to 75% of original size
-                child: Stack(
-                  children: [
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        return MouseRegion(
-                          onHover: (event) {
-                            // Throttle hover events for better performance
-                            if (_mapDebounceTimer?.isActive ?? false) return;
-                            
-                            final RenderBox box = context.findRenderObject() as RenderBox;
-                            final localPosition = box.globalToLocal(event.position);
-                            
-                            final closestIndex = findClosestRoutePoint(localPosition, constraints);
-                            if (closestIndex >= 0 && closestIndex < routePoints.length) {
-                              // Map the route point index to an elevation point index
-                              int elevationIndex;
-                              
-                              // If the arrays have the same length, use direct mapping
-                              if (routePoints.length == elevationPoints.length) {
-                                elevationIndex = closestIndex;
-                              } else {
-                                // Otherwise, use proportional mapping
-                                double ratio = elevationPoints.length / routePoints.length;
-                                elevationIndex = (closestIndex * ratio).round();
-                                elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
-                              }
-                              
-                              // If we found a valid elevation point, update the chart and info panel
-                              if (elevationIndex >= 0 && elevationIndex < elevationPoints.length) {
-                                // Update all state in a single setState call for immediate visual feedback
-                                setState(() {
-                                  hoveredPointIndex = closestIndex;
-                                  _closestElevationPointIndex = elevationIndex;
-                                  hoveredDistance = elevationPoints[elevationIndex].x;
-                                  hoveredSpot = elevationPoints[elevationIndex];
-                                });
-                              }
-                              
-                              // Set a very short throttle to prevent too many updates
-                              _mapDebounceTimer = Timer(const Duration(milliseconds: 5), () {});
-                            }
-                          },
-                          onExit: (_) {
-                            setState(() {
-                              hoveredPointIndex = null;
-                              hoveredDistance = null;
-                              hoveredSpot = null;
-                              _closestElevationPointIndex = -1;
-                            });
-                          },
-                          child: FlutterMap(
-                            mapController: mapController,
-                            options: MapOptions(
-                              initialCameraFit: CameraFit.bounds(
-                                bounds: LatLngBounds.fromPoints(routePoints),
-                                padding: const EdgeInsets.all(20.0),
-                              ),
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName: 'com.example.app',
-                                tileProvider: CancellableNetworkTileProvider(),
-                              ),
-                              PolylineLayer(
-                                polylines: [
-                                  Polyline(
-                                    points: routePoints,
-                                    color: Colors.blue,
-                                    strokeWidth: 3,
-                                  ),
-                                ],
-                              ),
-                              if (hoveredPointIndex != null && hoveredPointIndex! < routePoints.length)
-                                MarkerLayer(
-                                  markers: [
-                                    Marker(
-                                      point: routePoints[hoveredPointIndex!],
-                                      child: Container(
-                                        width: 3, // Reduced from 5 to 3 (40% smaller)
-                                        height: 3, // Reduced from 5 to 3 (40% smaller)
-                                        decoration: BoxDecoration(
-                                          color: Colors.blue,
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Colors.white,
-                                            width: 1,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              // Add markers for checkpoints
-                              if (showCheckpoints && checkpoints.isNotEmpty)
-                                MarkerLayer(
-                                  markers: checkpoints.map((checkpoint) {
-                                    // Find the closest route point to this checkpoint distance
-                                    int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
-                                    if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
-                                      return Marker(
-                                        point: LatLng(0, 0),
-                                        width: 0,
-                                        height: 0,
-                                        child: Container(),
-                                      );
-                                    }
-                                    
-                                    return Marker(
-                                      point: routePoints[routePointIndex],
-                                      child: Container(
-                                        width: 12,
-                                        height: 12,
-                                        decoration: BoxDecoration(
-                                          color: Colors.red.withOpacity(0.7),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Colors.white,
-                                            width: 2,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              
-              // Information panel between map and elevation chart
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
-                margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8.0),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    // Use a responsive layout based on available width
-                    final isWide = constraints.maxWidth > 600;
+                    // Calculate container width based on available space
+                    final screenWidth = constraints.maxWidth;
+                    final double horizontalPadding = screenWidth > 600 ? 40.0 : 0.0;
+                    final double containerWidth = screenWidth - (horizontalPadding * 2);
                     
-                    // Get the point to display - either the hovered point or the last point in the route
-                    final displaySpot = hoveredSpot ?? (elevationPoints.isNotEmpty ? elevationPoints.last : null);
-                    final displayIndex = hoveredSpot != null && _closestElevationPointIndex >= 0 ? 
-                                        _closestElevationPointIndex : 
-                                        (elevationPoints.isNotEmpty ? elevationPoints.length - 1 : -1);
-                    
-                    // If we have no data yet, show a placeholder
-                    if (displaySpot == null || displayIndex < 0) {
-                      return const Center(
-                        child: Text(
-                          'Upload a GPX file to see route information',
-                          style: TextStyle(
-                            fontStyle: FontStyle.italic,
-                            color: Colors.grey,
-                          ),
+                    return Center(
+                      child: Container(
+                        width: containerWidth,
+                        decoration: BoxDecoration(
+                          border: screenWidth > 600 ? Border.all(color: Colors.grey.shade300, width: 1) : null,
+                          borderRadius: screenWidth > 600 ? BorderRadius.circular(8) : null,
                         ),
-                      );
-                    }
-                    
-                    // Create info items
-                    final infoItems = [
-                      // Distance information
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Distance',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey,
+                        child: Stack(
+                          children: [
+                            LayoutBuilder(
+                              builder: (context, mapConstraints) {
+                                return GestureDetector(
+                                  onTap: () => _handleTapForCheckpoint(),
+                                  child: MouseRegion(
+                                    cursor: hoveredDistance != null ? 
+                                           SystemMouseCursors.click : 
+                                           SystemMouseCursors.basic,
+                                    onHover: (event) {
+                                      // Throttle hover events for better performance
+                                      if (_mapDebounceTimer?.isActive ?? false) return;
+                                      
+                                      // Safely access the render box
+                                      final RenderBox? box = context.findRenderObject() as RenderBox?;
+                                      if (box == null) return;
+                                      
+                                      try {
+                                        final localPosition = box.globalToLocal(event.position);
+                                        
+                                        final closestIndex = findClosestRoutePoint(localPosition, mapConstraints);
+                                        if (closestIndex >= 0 && closestIndex < routePoints.length) {
+                                          // Map the route point index to an elevation point index
+                                          int elevationIndex;
+                                          
+                                          // If the arrays have the same length, use direct mapping
+                                          if (routePoints.length == elevationPoints.length) {
+                                            elevationIndex = closestIndex;
+                                          } else {
+                                            // Otherwise, use proportional mapping
+                                            double ratio = elevationPoints.length / routePoints.length;
+                                            elevationIndex = (closestIndex * ratio).round();
+                                            elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
+                                          }
+                                          
+                                          // If we found a valid elevation point, update the chart and info panel
+                                          if (elevationIndex >= 0 && elevationIndex < elevationPoints.length && mounted) {
+                                            // Update all state in a single setState call for immediate visual feedback
+                                            setState(() {
+                                              hoveredPointIndex = closestIndex;
+                                              _closestElevationPointIndex = elevationIndex;
+                                              hoveredDistance = elevationPoints[elevationIndex].x;
+                                              hoveredSpot = elevationPoints[elevationIndex];
+                                            });
+                                          }
+                                          
+                                          // Set a very short throttle to prevent too many updates
+                                          _mapDebounceTimer = Timer(const Duration(milliseconds: 5), () {});
+                                        }
+                                      } catch (e) {
+                                        // Silently handle any errors during hover handling
+                                      }
+                                    },
+                                    onExit: (_) {
+                                      if (mounted) {
+                                        setState(() {
+                                          hoveredPointIndex = null;
+                                          hoveredDistance = null;
+                                          hoveredSpot = null;
+                                          _closestElevationPointIndex = -1;
+                                        });
+                                      }
+                                    },
+                                    child: FlutterMap(
+                                      mapController: mapController,
+                                      options: MapOptions(
+                                        initialCameraFit: CameraFit.bounds(
+                                          bounds: LatLngBounds.fromPoints(routePoints),
+                                          padding: const EdgeInsets.all(20.0),
+                                        ),
+                                      ),
+                                      children: [
+                                        TileLayer(
+                                          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                          userAgentPackageName: 'com.example.app',
+                                          tileProvider: CancellableNetworkTileProvider(),
+                                        ),
+                                        PolylineLayer(
+                                          polylines: [
+                                            Polyline(
+                                              points: routePoints,
+                                              color: Colors.blue,
+                                              strokeWidth: 3,
+                                            ),
+                                          ],
+                                        ),
+                                        if (hoveredPointIndex != null && hoveredPointIndex! < routePoints.length)
+                                          MarkerLayer(
+                                            markers: [
+                                              Marker(
+                                                point: routePoints[hoveredPointIndex!],
+                                                child: Container(
+                                                  width: 3, // Reduced from 5 to 3 (40% smaller)
+                                                  height: 3, // Reduced from 5 to 3 (40% smaller)
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.blue,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: Colors.white,
+                                                      width: 1,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        // Add markers for checkpoints and pending checkpoint
+                                        MarkerLayer(
+                                          markers: [
+                                            // Regular checkpoints
+                                            if (showCheckpoints)
+                                              ...checkpoints.map((checkpoint) {
+                                                // Find the closest route point to this checkpoint distance
+                                                int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
+                                                if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
+                                                  return Marker(
+                                                    point: LatLng(0, 0),
+                                                    width: 0,
+                                                    height: 0,
+                                                    child: Container(),
+                                                  );
+                                                }
+                                                
+                                                return Marker(
+                                                  point: routePoints[routePointIndex],
+                                                  child: Container(
+                                                    width: 12,
+                                                    height: 12,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.red.withOpacity(0.7),
+                                                      shape: BoxShape.circle,
+                                                      border: Border.all(
+                                                        color: Colors.white,
+                                                        width: 2,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              }),
+                                            // Show pending checkpoint if applicable
+                                            if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null) 
+                                              ..._getPendingCheckpointMarker(),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          ),
-                          Text(
-                            '${displaySpot.x.toStringAsFixed(2)} km',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      
-                      // Elevation information
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Elevation',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            '${displaySpot.y.toStringAsFixed(0)} m',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                      
-                      // Elevation gain information
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Elevation Gain',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            displayIndex >= 0 && displayIndex < cumulativeElevationGain.length
-                                ? '${cumulativeElevationGain[displayIndex].toStringAsFixed(0)} m'
-                                : cumulativeElevationGain.isNotEmpty 
-                                  ? '${cumulativeElevationGain.last.toStringAsFixed(0)} m'
-                                  : '0 m',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                      
-                      // Elevation loss information
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Elevation Loss',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            displayIndex >= 0 && displayIndex < cumulativeElevationLoss.length
-                                ? '${cumulativeElevationLoss[displayIndex].toStringAsFixed(0)} m'
-                                : cumulativeElevationLoss.isNotEmpty 
-                                  ? '${cumulativeElevationLoss.last.toStringAsFixed(0)} m'
-                                  : '0 m',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ],
-                      ),
-                      
-                      // Time information
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Estimated Time',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          Text(
-                            _getTimeAtDistance(displaySpot.x),
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ];
-                    
-                    // Return appropriate layout based on screen width
-                    return isWide
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: infoItems,
-                        )
-                      : Wrap(
-                          spacing: 20,
-                          runSpacing: 12,
-                          children: infoItems,
-                        );
+                    );
                   },
                 ),
               ),
@@ -994,201 +1080,148 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     double minElevRounded = (minElevation! / 200).floor() * 200;
                     double maxElevRounded = (maxElevation! / 200).ceil() * 200;
                     
-                    return MouseRegion(
-                      onHover: (event) {
-                        if (elevationPoints.isEmpty) return;
-                        
-                        // Convert hover position to chart coordinates
-                        final RenderBox box = context.findRenderObject() as RenderBox;
-                        final localPosition = box.globalToLocal(event.position);
-                        
-                        // Calculate distance based on x position relative to chart width
-                        // Get the actual chart dimensions from the constraints
-                        final double totalWidth = constraints.maxWidth;
-                        
-                        // Define clear left and right offsets
-                        final double leftOffset = 56; // Left padding + axis labels
-                        final double rightOffset = 16; // Right padding
-                        final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
-                        
-                        // Calculate how far along the chart the mouse is (0.0 to 1.0)
-                        final double normalizedX = (localPosition.dx - leftOffset) / chartAreaWidth;
-                        
-                        // Convert to actual distance in km
-                        final double hoverDistance = normalizedX * elevationPoints.last.x;
-                        
-                        // Validate the distance is within chart boundaries
-                        if (normalizedX < 0 || normalizedX > 1) return;
-                        
-                        // Find closest point on elevation chart
-                        final FlSpot hoveredPoint = findClosestElevationPoint(hoverDistance);
-                        final int elevationIndex = _closestElevationPointIndex;
-                        
-                        if (elevationIndex < 0) return;
-                        
-                        // Find corresponding route point for map marker
-                        int routePointIndex = _findRoutePointIndexForDistance(hoveredPoint.x);
-                        
-                        if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
-                        
-                        // Update all state variables in a single setState call
-                        setState(() {
-                          hoveredPointIndex = routePointIndex;
-                          hoveredDistance = hoveredPoint.x;
-                          hoveredSpot = hoveredPoint;
-                        });
-                      },
-                      onExit: (_) {
-                        // Clear hover state when mouse leaves chart
-                        setState(() {
-                          hoveredPointIndex = null;
-                          hoveredDistance = null;
-                          hoveredSpot = null;
-                          _closestElevationPointIndex = -1;
-                        });
-                      },
-                      child: LineChart(
-                        LineChartData(
-                          gridData: const FlGridData(show: true),
-                          borderData: FlBorderData(
-                            show: true,
-                            border: Border.all(color: Colors.grey.shade300, width: 1),
-                          ),
-                          titlesData: FlTitlesData(
-                            bottomTitles: AxisTitles(
-                              axisNameWidget: const Padding(
-                                padding: EdgeInsets.only(top: 12.0),
-                                child: Text(
-                                  'Distance (km)',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              sideTitles: SideTitles(
-                                showTitles: true,
-                                reservedSize: 30,
-                                interval: (elevationPoints.last.x / 10).clamp(1, double.infinity),
-                                getTitlesWidget: (value, meta) {
-                                  return Text(
-                                    value.toInt().toString(),
-                                    style: const TextStyle(
-                                      fontSize: 10,
+                    return GestureDetector(
+                      onTap: () => _handleTapForCheckpoint(),
+                      child: MouseRegion(
+                        cursor: hoveredDistance != null ? 
+                               SystemMouseCursors.click : 
+                               SystemMouseCursors.basic,
+                        onHover: (event) {
+                          if (elevationPoints.isEmpty) return;
+                          
+                          // Safely access the render box
+                          final RenderBox? box = context.findRenderObject() as RenderBox?;
+                          if (box == null) return;
+                          
+                          try {
+                            final localPosition = box.globalToLocal(event.position);
+                            
+                            // Calculate distance based on x position relative to chart width
+                            // Get the actual chart dimensions from the constraints
+                            final double totalWidth = constraints.maxWidth;
+                            
+                            // Define clear left and right offsets
+                            const double leftOffset = 56; // Left padding + axis labels
+                            const double rightOffset = 16; // Right padding
+                            final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
+                            
+                            // Calculate how far along the chart the mouse is (0.0 to 1.0)
+                            double normalizedX = (localPosition.dx - leftOffset) / chartAreaWidth;
+                            
+                            // Apply boundary constraints to prevent edge artifacts
+                            normalizedX = normalizedX.clamp(0.0, 1.0);
+                            
+                            // Convert to actual distance in km
+                            final double hoverDistance = normalizedX * elevationPoints.last.x;
+                            
+                            // Find closest point on elevation chart
+                            final FlSpot hoveredPoint = findClosestElevationPoint(hoverDistance);
+                            final int elevationIndex = _closestElevationPointIndex;
+                            
+                            if (elevationIndex < 0) return;
+                            
+                            // Find corresponding route point for map marker
+                            int routePointIndex = _findRoutePointIndexForDistance(hoveredPoint.x);
+                            
+                            if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
+                            
+                            // Update all state variables in a single setState call
+                            if (mounted) {
+                              setState(() {
+                                hoveredPointIndex = routePointIndex;
+                                hoveredDistance = hoveredPoint.x;
+                                hoveredSpot = hoveredPoint;
+                              });
+                            }
+                          } catch (e) {
+                            // Silently handle any errors during hover handling
+                          }
+                        },
+                        onExit: (_) {
+                          // Clear hover state when mouse leaves chart
+                          if (mounted) {
+                            setState(() {
+                              hoveredPointIndex = null;
+                              hoveredDistance = null;
+                              hoveredSpot = null;
+                              _closestElevationPointIndex = -1;
+                            });
+                          }
+                        },
+                        child: LineChart(
+                          LineChartData(
+                            gridData: const FlGridData(show: true),
+                            borderData: FlBorderData(
+                              show: true,
+                              border: Border.all(color: Colors.grey.shade300, width: 1),
+                            ),
+                            titlesData: FlTitlesData(
+                              bottomTitles: AxisTitles(
+                                axisNameWidget: const Padding(
+                                  padding: EdgeInsets.only(top: 12.0),
+                                  child: Text(
+                                    'Distance (km)',
+                                    style: TextStyle(
+                                      fontSize: 12,
                                       fontWeight: FontWeight.bold,
                                     ),
-                                  );
-                                },
-                              ),
-                            ),
-                            leftTitles: AxisTitles(
-                              axisNameWidget: const Padding(
-                                padding: EdgeInsets.only(bottom: 8.0, right: 8.0),
-                                child: Text(
-                                  'Elevation (m)',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                              ),
-                              sideTitles: SideTitles(
-                                showTitles: true,
-                                reservedSize: 40,
-                                interval: 200, // Fixed 200m intervals
-                                getTitlesWidget: (value, meta) {
-                                  // Only show labels at even 200m intervals
-                                  if (value % 200 != 0) {
-                                    return Container();
-                                  }
-                                  return Padding(
-                                    padding: const EdgeInsets.only(right: 8.0),
-                                    child: Text(
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  reservedSize: 30,
+                                  interval: (elevationPoints.last.x / 10).clamp(1, double.infinity),
+                                  getTitlesWidget: (value, meta) {
+                                    return Text(
                                       value.toInt().toString(),
                                       style: const TextStyle(
-                                        fontSize: 10, // Same as x-axis
+                                        fontSize: 10,
                                         fontWeight: FontWeight.bold,
                                       ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            rightTitles: const AxisTitles(
-                              sideTitles: SideTitles(showTitles: false),
-                            ),
-                            topTitles: const AxisTitles(
-                              sideTitles: SideTitles(showTitles: false),
-                            ),
-                          ),
-                          lineBarsData: [
-                            LineChartBarData(
-                              spots: elevationPoints,
-                              isCurved: true,
-                              gradient: LinearGradient(
-                                colors: List.generate(
-                                  smoothedGradients.length,
-                                  (i) => getGradientColor(smoothedGradients[i]),
+                                    );
+                                  },
                                 ),
-                                stops: List.generate(
-                                  smoothedGradients.length,
-                                  (i) => elevationPoints[i].x / elevationPoints.last.x,
+                              ),
+                              leftTitles: AxisTitles(
+                                // Remove the axis name widget
+                                axisNameWidget: const SizedBox.shrink(),
+                                sideTitles: SideTitles(
+                                  showTitles: true,
+                                  reservedSize: 40,
+                                  interval: 200, // Fixed 200m intervals
+                                  getTitlesWidget: (value, meta) {
+                                    // Only show labels at even 200m intervals
+                                    if (value % 200 != 0) {
+                                      return Container();
+                                    }
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 8.0),
+                                      child: Text(
+                                        value.toInt().toString(),
+                                        style: const TextStyle(
+                                          fontSize: 10, // Same as x-axis
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 ),
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
                               ),
-                              barWidth: 2,
-                              dotData: FlDotData(
-                                show: true,
-                                checkToShowDot: (spot, barData) {
-                                  // Show dot for the hovered spot
-                                  if (hoveredSpot != null && 
-                                      (spot.x - hoveredSpot!.x).abs() < 0.05 && 
-                                      spot.y == hoveredSpot!.y) {
-                                    return true;
-                                  }
-                                  
-                                  // Show dots for checkpoints
-                                  if (showCheckpoints) {
-                                    for (var checkpoint in checkpoints) {
-                                      // Find the closest elevation point to this checkpoint
-                                      FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
-                                      if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
-                                        return true;
-                                      }
-                                    }
-                                  }
-                                  
-                                  return false;
-                                },
-                                getDotPainter: (spot, percent, barData, index) {
-                                  // Check if this is a checkpoint dot
-                                  bool isCheckpoint = false;
-                                  if (showCheckpoints) {
-                                    for (var checkpoint in checkpoints) {
-                                      FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
-                                      if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
-                                        isCheckpoint = true;
-                                        break;
-                                      }
-                                    }
-                                  }
-                                  
-                                  // Use red for checkpoints, blue for hovered spot
-                                  return FlDotCirclePainter(
-                                    radius: isCheckpoint ? 6 : 6,
-                                    color: isCheckpoint ? Colors.red : Colors.blue,
-                                    strokeWidth: 2,
-                                    strokeColor: Colors.white,
-                                  );
-                                },
+                              rightTitles: const AxisTitles(
+                                sideTitles: SideTitles(showTitles: false),
                               ),
-                              belowBarData: BarAreaData(
-                                show: true,
+                              topTitles: const AxisTitles(
+                                sideTitles: SideTitles(showTitles: false),
+                              ),
+                            ),
+                            lineBarsData: [
+                              LineChartBarData(
+                                spots: elevationPoints,
+                                isCurved: true,
                                 gradient: LinearGradient(
                                   colors: List.generate(
                                     smoothedGradients.length,
-                                    (i) => getGradientColor(smoothedGradients[i]).withOpacity(0.2),
+                                    (i) => getGradientColor(smoothedGradients[i]),
                                   ),
                                   stops: List.generate(
                                     smoothedGradients.length,
@@ -1197,15 +1230,76 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                   begin: Alignment.centerLeft,
                                   end: Alignment.centerRight,
                                 ),
+                                barWidth: 2,
+                                dotData: FlDotData(
+                                  show: true,
+                                  checkToShowDot: (spot, barData) {
+                                    // Show dot for the hovered spot
+                                    if (hoveredSpot != null && 
+                                        (spot.x - hoveredSpot!.x).abs() < 0.05 && 
+                                        spot.y == hoveredSpot!.y) {
+                                      return true;
+                                    }
+                                    
+                                    // Show dots for checkpoints
+                                    if (showCheckpoints) {
+                                      for (var checkpoint in checkpoints) {
+                                        // Find the closest elevation point to this checkpoint
+                                        FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                        if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                          return true;
+                                        }
+                                      }
+                                    }
+                                    
+                                    return false;
+                                  },
+                                  getDotPainter: (spot, percent, barData, index) {
+                                    // Check if this is a checkpoint dot
+                                    bool isCheckpoint = false;
+                                    if (showCheckpoints) {
+                                      for (var checkpoint in checkpoints) {
+                                        FlSpot elevSpot = findClosestElevationPoint(checkpoint.distance);
+                                        if ((spot.x - elevSpot.x).abs() < 0.05 && spot.y == elevSpot.y) {
+                                          isCheckpoint = true;
+                                          break;
+                                        }
+                                      }
+                                    }
+                                    
+                                    // Use red for checkpoints, blue for hovered spot
+                                    return FlDotCirclePainter(
+                                      radius: isCheckpoint ? 6 : 6,
+                                      color: isCheckpoint ? Colors.red : Colors.blue,
+                                      strokeWidth: 2,
+                                      strokeColor: Colors.white,
+                                    );
+                                  },
+                                ),
+                                belowBarData: BarAreaData(
+                                  show: true,
+                                  gradient: LinearGradient(
+                                    colors: List.generate(
+                                      smoothedGradients.length,
+                                      (i) => getGradientColor(smoothedGradients[i]).withOpacity(0.2),
+                                    ),
+                                    stops: List.generate(
+                                      smoothedGradients.length,
+                                      (i) => elevationPoints[i].x / elevationPoints.last.x,
+                                    ),
+                                    begin: Alignment.centerLeft,
+                                    end: Alignment.centerRight,
+                                  ),
+                                ),
                               ),
+                            ],
+                            minY: minElevRounded, // Use rounded value for even intervals
+                            maxY: maxElevRounded, // Use rounded value for even intervals
+                            minX: 0,
+                            maxX: elevationPoints.last.x,
+                            lineTouchData: LineTouchData(
+                              enabled: false, // Disable built-in hover interactions
                             ),
-                          ],
-                          minY: minElevRounded, // Use rounded value for even intervals
-                          maxY: maxElevRounded, // Use rounded value for even intervals
-                          minX: 0,
-                          maxX: elevationPoints.last.x,
-                          lineTouchData: LineTouchData(
-                            enabled: false, // Disable built-in hover interactions
                           ),
                         ),
                       ),
@@ -1213,6 +1307,78 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   },
                 ),
               ),
+              
+              // Route Summary Section with bar charts
+              if (routePoints.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Section title
+                      Text(
+                        'Route Summary',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Total statistics
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          _buildStatCard(
+                            'Total Distance',
+                            '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
+                            Icons.straighten,
+                            Colors.blue,
+                          ),
+                          _buildStatCard(
+                            'Elevation Gain',
+                            '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
+                            Icons.trending_up,
+                            Colors.green,
+                          ),
+                          _buildStatCard(
+                            'Elevation Loss',
+                            '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
+                            Icons.trending_down,
+                            Colors.red,
+                          ),
+                          _buildStatCard(
+                            'Estimated Time',
+                            timePoints.isNotEmpty ? _formatTotalTime(timePoints.last.y) : '0m',
+                            Icons.timer,
+                            Colors.orange,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      
+                      // Bar charts
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Elevation distribution chart
+                          _buildBarChart(
+                            'Time at Elevation',
+                            calculateRouteSummaryData()['elevation'] ?? [],
+                            Colors.blue,
+                          ),
+                          const SizedBox(height: 24),
+                          // Gradient distribution chart
+                          _buildBarChart(
+                            'Time at Gradient',
+                            calculateRouteSummaryData()['gradient'] ?? [],
+                            Colors.red,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               
               // Checkpoint button and table
               Padding(
@@ -1226,8 +1392,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         setState(() {
                           showCheckpoints = !showCheckpoints;
                           if (showCheckpoints && checkpoints.isEmpty) {
-                            // Add an initial empty checkpoint
-                            addCheckpoint();
+                            // Add a default 'Finish' checkpoint
+                            addDefaultFinishCheckpoint();
                           }
                         });
                       },
@@ -1243,11 +1409,46 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          ElevatedButton.icon(
-                            onPressed: checkpoints.isEmpty ? null : exportCheckpointsToExcel,
-                            icon: const Icon(Icons.file_download),
-                            label: const Text('Export to Excel'),
+                          // Start time picker
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Text('Start Time: '),
+                                TextButton(
+                                  onPressed: () async {
+                                    final TimeOfDay? time = await showTimePicker(
+                                      context: context,
+                                      initialTime: startTime ?? TimeOfDay.now(),
+                                      builder: (BuildContext context, Widget? child) {
+                                        return MediaQuery(
+                                          data: MediaQuery.of(context).copyWith(
+                                            alwaysUse24HourFormat: true,
+                                          ),
+                                          child: child!,
+                                        );
+                                      },
+                                    );
+                                    if (time != null && mounted) {
+                                      setState(() {
+                                        startTime = time;
+                                      });
+                                    }
+                                  },
+                                  child: Text(
+                                    startTime != null 
+                                        ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
+                                        : 'Set Time',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: startTime != null ? Colors.blue : null,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          // Export button (removed)
+                          Container(),
                         ],
                       ),
                       
@@ -1266,7 +1467,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         child: Row(
                           children: [
                             Expanded(
-                              flex: 3,
+                              flex: 2,
                               child: Text(
                                 'Name',
                                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -1328,7 +1529,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 48), // Space for delete button
+                            // Add Real Time column if start time is set
+                            if (startTime != null)
+                              Expanded(
+                                flex: 2,
+                                child: Text(
+                                  'Real Time',
+                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(width: 110), // Space for delete and pace adjustment buttons
                           ],
                         ),
                       ),
@@ -1361,9 +1573,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 children: [
                                   // Name field (editable)
                                   Expanded(
-                                    flex: 3,
+                                    flex: 2,
                                     child: TextFormField(
                                       key: ValueKey('checkpoint_name_${checkpoint.id}'),
+                                      focusNode: _nameFocusNodes[index],
                                       initialValue: checkpoint.name ?? '',
                                       decoration: const InputDecoration(
                                         isDense: true,
@@ -1376,6 +1589,26 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           checkpoint.name = value;
                                         });
                                       },
+                                      onTap: () {
+                                        setState(() {
+                                          _editingCheckpointId = checkpoint.id;
+                                          _isEditingName = true;
+                                        });
+                                      },
+                                      onFieldSubmitted: (_) {
+                                        setState(() {
+                                          _isEditingName = false;
+                                          _editingCheckpointId = null;
+                                        });
+                                        _processCheckpointChanges();
+                                      },
+                                      onEditingComplete: () {
+                                        setState(() {
+                                          _isEditingName = false;
+                                          _editingCheckpointId = null;
+                                        });
+                                        _processCheckpointChanges();
+                                      },
                                     ),
                                   ),
                                   
@@ -1384,6 +1617,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     flex: 2,
                                     child: TextFormField(
                                       key: ValueKey('checkpoint_${checkpoint.id}'),
+                                      focusNode: _distanceFocusNodes[index],
                                       initialValue: checkpoint.distance > 0
                                           ? checkpoint.distance.toStringAsFixed(1)
                                           : '',
@@ -1401,20 +1635,25 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           updateCheckpointDistance(index, distance);
                                         }
                                       },
-                                      // Force recalculation when the user finishes editing
-                                      onEditingComplete: () {
-                                        // Cancel any existing timer to ensure immediate update
-                                        _checkpointUpdateTimer?.cancel();
-                                        
-                                        // This ensures we recalculate even if the user presses Enter
+                                      onTap: () {
                                         setState(() {
-                                          // Sort checkpoints by distance
-                                          checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
-                                          
-                                          // Recalculate all metrics
-                                          _calculateCheckpointMetrics();
+                                          _editingCheckpointId = checkpoint.id;
+                                          _isEditingDistance = true;
                                         });
-                                        FocusScope.of(context).unfocus(); // Hide keyboard
+                                      },
+                                      onFieldSubmitted: (_) {
+                                        setState(() {
+                                          _isEditingDistance = false;
+                                          _editingCheckpointId = null;
+                                        });
+                                        _processCheckpointChanges();
+                                      },
+                                      onEditingComplete: () {
+                                        setState(() {
+                                          _isEditingDistance = false;
+                                          _editingCheckpointId = null;
+                                        });
+                                        _processCheckpointChanges();
                                       },
                                     ),
                                   ),
@@ -1474,15 +1713,34 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     ),
                                   ),
                                   
-                                  // Delete button
-                                  SizedBox(
-                                    width: 40,
-                                    child: IconButton(
-                                      icon: const Icon(Icons.delete, size: 20),
-                                      onPressed: () => removeCheckpoint(index),
-                                      color: Colors.red,
-                                      padding: EdgeInsets.zero,
+                                  // Add Real Time column if start time is set
+                                  if (startTime != null)
+                                    Expanded(
+                                      flex: 2,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                                        child: Text(
+                                          _formatRealTime(checkpoint.cumulativeTime),
+                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
                                     ),
+                                  
+                                  // Control buttons - adjust pace and delete
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      // Delete button
+                                      SizedBox(
+                                        width: 40,
+                                        child: IconButton(
+                                          icon: const Icon(Icons.delete, size: 20),
+                                          onPressed: () => removeCheckpoint(index),
+                                          color: Colors.red,
+                                          padding: EdgeInsets.zero,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -1504,6 +1762,23 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           icon: const Icon(Icons.add),
                           label: const Text('Add Checkpoint'),
                         ),
+                      ),
+                      
+                      // Export to Excel and Reset buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Export to Excel button
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: ElevatedButton.icon(
+                              onPressed: checkpoints.isNotEmpty ? 
+                                exportCheckpointsToExcel : null,
+                              icon: const Icon(Icons.file_download),
+                              label: const Text('Export to Excel'),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ],
@@ -1645,6 +1920,23 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       // Add the checkpoint
       checkpoints.add(newCheckpoint);
       
+      // Add new focus nodes for this checkpoint - with web platform handling
+      final nameNode = FocusNode();
+      final distanceNode = FocusNode();
+      
+      // Add focus listeners only if not on web
+      if (!_isWeb) {
+        try {
+          nameNode.addListener(_onFocusChange);
+          distanceNode.addListener(_onFocusChange);
+        } catch (e) {
+          // Silently handle any focus node errors
+        }
+      }
+      
+      _nameFocusNodes.add(nameNode);
+      _distanceFocusNodes.add(distanceNode);
+      
       // Sort checkpoints by distance
       checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
       
@@ -1652,16 +1944,45 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       _calculateCheckpointMetrics(startIndex: 0);
     });
   }
-  
-  // Update the distance of a checkpoint with debounce
+
+  // Add a default 'Finish' checkpoint
+  void addDefaultFinishCheckpoint() {
+    if (elevationPoints.isEmpty) return;
+    
+    setState(() {
+      // Create a new checkpoint at the end of the route
+      final finishCheckpoint = CheckpointData(distance: elevationPoints.last.x);
+      finishCheckpoint.id = 'finish';
+      finishCheckpoint.name = 'Finish';
+      
+      // Add the checkpoint
+      checkpoints.add(finishCheckpoint);
+      
+      // Add new focus nodes for this checkpoint - with web platform handling
+      final nameNode = FocusNode();
+      final distanceNode = FocusNode();
+      
+      // Add focus listeners only if not on web
+      if (!_isWeb) {
+        try {
+          nameNode.addListener(_onFocusChange);
+          distanceNode.addListener(_onFocusChange);
+        } catch (e) {
+          // Silently handle any focus node errors
+        }
+      }
+      
+      _nameFocusNodes.add(nameNode);
+      _distanceFocusNodes.add(distanceNode);
+      
+      // Recalculate metrics for all checkpoints to ensure consistency
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+  }
+
+  // Update the distance of a checkpoint
   void updateCheckpointDistance(int index, double newDistance) {
     if (index < 0 || index >= checkpoints.length) return;
-    
-    // Cancel any existing timer
-    _checkpointUpdateTimer?.cancel();
-    
-    // Store the checkpoint's ID before updating
-    final checkpointId = checkpoints[index].id;
     
     // Ensure distance is not negative
     newDistance = max(0, newDistance);
@@ -1675,26 +1996,45 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     setState(() {
       checkpoints[index].distance = newDistance;
     });
-    
-    // Set a timer to update the table after a short delay (1.0 second)
-    _checkpointUpdateTimer = Timer(const Duration(seconds: 1), () {
-      if (mounted) {
-        setState(() {
-          // Sort checkpoints by distance
-          checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
-          
-          // Recalculate metrics for all checkpoints to ensure consistency
-          _calculateCheckpointMetrics(startIndex: 0);
-        });
-      }
+  }
+
+  // Process checkpoint changes when editing is complete
+  void _processCheckpointChanges() {
+    setState(() {
+      // Sort checkpoints by distance
+      checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+      
+      // Recalculate metrics for all checkpoints to ensure consistency
+      _calculateCheckpointMetrics(startIndex: 0);
     });
   }
-  
+
   // Remove a checkpoint at the given index
   void removeCheckpoint(int index) {
     if (index < 0 || index >= checkpoints.length) return;
     
     setState(() {
+      // Remove the focus nodes - with web platform handling
+      if (!_isWeb && index < _nameFocusNodes.length) {
+        try {
+          _nameFocusNodes[index].removeListener(_onFocusChange);
+          _nameFocusNodes[index].dispose();
+        } catch (e) {
+          // Silently handle any focus node errors
+        }
+        _nameFocusNodes.removeAt(index);
+      }
+      
+      if (!_isWeb && index < _distanceFocusNodes.length) {
+        try {
+          _distanceFocusNodes[index].removeListener(_onFocusChange);
+          _distanceFocusNodes[index].dispose();
+        } catch (e) {
+          // Silently handle any focus node errors
+        }
+        _distanceFocusNodes.removeAt(index);
+      }
+      
       // Remove the checkpoint
       checkpoints.removeAt(index);
       
@@ -1722,6 +2062,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       // Ensure distance is not beyond the route length
       if (elevationPoints.isNotEmpty) {
         checkpoint.distance = min(checkpoint.distance, elevationPoints.last.x);
+      }
+      
+      // Calculate base grade adjusted pace for this segment if not already done
+      double startDistance = 0;
+      if (i > 0) {
+        startDistance = checkpoints[i-1].distance;
+      }
+      if (checkpoint.baseGradeAdjustedPace <= 0) {
+        checkpoint.baseGradeAdjustedPace = getSegmentBaseGradeAdjustedPace(startDistance, checkpoint.distance);
       }
     }
     
@@ -1802,6 +2151,34 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     }
   }
 
+  // Format real time based on start time plus cumulative minutes
+  String _formatRealTime(double cumulativeMinutes) {
+    if (startTime == null) return 'N/A';
+    
+    // Convert start time to minutes since midnight
+    int startMinutes = startTime!.hour * 60 + startTime!.minute;
+    
+    // Add cumulative time (in minutes)
+    int totalMinutes = startMinutes + cumulativeMinutes.round();
+    
+    // Handle overflow to next day
+    bool isNextDay = false;
+    if (totalMinutes >= 24 * 60) {
+      totalMinutes %= (24 * 60);
+      isNextDay = true;
+    }
+    
+    // Convert back to hours and minutes
+    int hours = totalMinutes ~/ 60;
+    int minutes = totalMinutes % 60;
+    
+    // Format with leading zeros
+    String timeStr = '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}';
+    
+    // Add indicator if time is on the next day
+    return isNextDay ? '$timeStr (+1)' : timeStr;
+  }
+
   // Export checkpoints to Excel file
   Future<void> exportCheckpointsToExcel() async {
     if (checkpoints.isEmpty) {
@@ -1829,6 +2206,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         'Total Time',
         'Segment Time',
       ];
+      
+      // Add Real Time header if start time is set
+      if (startTime != null) {
+        headers.add('Real Time');
+      }
       
       for (int i = 0; i < headers.length; i++) {
         sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = 
@@ -1866,6 +2248,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         // Segment Time (formatted)
         sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i+1)).value = 
             xl.TextCellValue(_formatTotalTime(checkpoint.timeFromPrevious));
+        
+        // Column index tracker
+        int colIndex = 7;
+        
+        // Real Time (if start time is set)
+        if (startTime != null) {
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: colIndex, rowIndex: i+1)).value = 
+              xl.TextCellValue(_formatRealTime(checkpoint.cumulativeTime));
+        }
       }
       
       // Get the filename
@@ -1934,5 +2325,579 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         SnackBar(content: Text('Error exporting checkpoints: $e')),
       );
     }
+  }
+
+  // Get average grade adjusted pace for a segment
+  double getSegmentBaseGradeAdjustedPace(double startDistance, double endDistance) {
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty) return selectedPaceSeconds;
+    
+    // Find elevation points within this segment
+    List<int> pointIndices = [];
+    double totalDistance = 0;
+    double weightedPaceSum = 0;
+    
+    for (int i = 0; i < elevationPoints.length; i++) {
+      double distance = elevationPoints[i].x;
+      if (distance >= startDistance && distance <= endDistance) {
+        pointIndices.add(i);
+      }
+    }
+    
+    // If no points found, return default pace
+    if (pointIndices.isEmpty) return selectedPaceSeconds;
+    
+    // Calculate weighted average of grade adjusted pace
+    for (int i = 1; i < pointIndices.length; i++) {
+      int idx = pointIndices[i];
+      int prevIdx = pointIndices[i-1];
+      
+      double segmentDistance = elevationPoints[idx].x - elevationPoints[prevIdx].x;
+      double gradientAdj = calculateGradeAdjustment(smoothedGradients[idx]);
+      double segmentPace = selectedPaceSeconds * gradientAdj;
+      
+      weightedPaceSum += segmentPace * segmentDistance;
+      totalDistance += segmentDistance;
+    }
+    
+    if (totalDistance > 0) {
+      return weightedPaceSum / totalDistance;
+    } else {
+      return selectedPaceSeconds;
+    }
+  }
+
+  // Calculate the total time for a segment based on grade adjusted pace
+  double calculateSegmentTime(double startDistance, double endDistance) {
+    if (startDistance >= endDistance) return 0;
+    
+    double segmentDistance = endDistance - startDistance;
+    double baseGradeAdjustedPace = getSegmentBaseGradeAdjustedPace(startDistance, endDistance);
+    
+    // Ensure minimum pace
+    baseGradeAdjustedPace = max(baseGradeAdjustedPace, minSegmentPace);
+    
+    // Calculate time in minutes
+    return (segmentDistance * baseGradeAdjustedPace) / 60;
+  }
+
+  // Calculate the current overall average pace for the entire route
+  double calculateOverallAveragePace() {
+    if (elevationPoints.isEmpty || checkpoints.isEmpty) {
+      return selectedPaceSeconds;
+    }
+    
+    double totalDistance = elevationPoints.last.x;
+    double totalTimeMinutes = 0;
+    
+    // Calculate segment times based on base grade adjusted pace
+    if (checkpoints.length > 1) {
+      // Calculate multi-segment route
+      for (int i = 0; i < checkpoints.length - 1; i++) {
+        double startDist = checkpoints[i].distance;
+        double endDist = checkpoints[i + 1].distance;
+        double segTime = calculateSegmentTime(startDist, endDist);
+        totalTimeMinutes += segTime;
+      }
+      
+      // Add time from start to first checkpoint
+      double firstSegTime = calculateSegmentTime(0, checkpoints[0].distance);
+      totalTimeMinutes += firstSegTime;
+      
+    } else if (checkpoints.length == 1) {
+      // Single checkpoint route
+      // Time from start to checkpoint
+      double segTime = calculateSegmentTime(0, checkpoints[0].distance);
+      totalTimeMinutes += segTime;
+      
+      // Time from checkpoint to end
+      if (checkpoints[0].distance < totalDistance) {
+        double endSegTime = calculateSegmentTime(checkpoints[0].distance, totalDistance);
+        totalTimeMinutes += endSegTime;
+      }
+    }
+    
+    // Convert back to seconds per km
+    return (totalTimeMinutes * 60) / totalDistance;
+  }
+
+  // Calculate data for summary section charts
+  Map<String, List<ChartData>> calculateRouteSummaryData() {
+    Map<String, List<ChartData>> result = {
+      'elevation': [],
+      'pace': [],
+      'gradient': []
+    };
+    
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty || minElevation == null || maxElevation == null) return result;
+    
+    // Safety check - ensure we have enough data to create meaningful bins
+    if (elevationPoints.length < 5 || smoothedGradients.length < 5) {
+      // Add a "Not enough data" placeholder for each chart
+      result['elevation']!.add(ChartData('Insufficient Data', 0));
+      result['pace']!.add(ChartData('Insufficient Data', 0));
+      result['gradient']!.add(ChartData('Insufficient Data', 0));
+      return result;
+    }
+    
+    // Define custom elevation bins (0-500, 500-1000, 1000-1500, 1500-2000, 2000-2500, 2500-3000, >3000)
+    List<String> elevationLabels = [
+      '0:500m', 
+      '500:1000m', 
+      '1000:1500m', 
+      '1500:2000m', 
+      '2000:2500m', 
+      '2500:3000m', 
+      '>3000m'
+    ];
+    
+    List<double> elevationBreakpoints = [0, 500, 1000, 1500, 2000, 2500, 3000, double.infinity];
+    
+    // Define custom gradient bins
+    List<String> gradientLabels = [
+      '<-25%',
+      '-25%:-20%',
+      '-20%:-15%',
+      '-15%:-10%',
+      '-10%:-5%',
+      '-5%:0%',
+      '0%:5%',
+      '5%:10%',
+      '10%:15%',
+      '15%:20%',
+      '20%:25%',
+      '>25%'
+    ];
+    
+    List<double> gradientBreakpoints = [
+      double.negativeInfinity, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, double.infinity
+    ];
+    
+    // For pace: 20 s/km bins (keep as before, though we won't use it anymore)
+    int minPaceBin = (minSegmentPace / 20).floor();
+    int maxPaceBin = ((selectedPaceSeconds * 3) / 20).ceil(); // Allow for slower paces due to steep hills
+    
+    // Initialize custom bins with zeros
+    Map<int, double> elevationBins = {};
+    for (int i = 0; i < elevationBreakpoints.length - 1; i++) {
+      elevationBins[i] = 0;
+    }
+    
+    Map<int, double> gradientBins = {};
+    for (int i = 0; i < gradientBreakpoints.length - 1; i++) {
+      gradientBins[i] = 0;
+    }
+    
+    // Keep the pace bins for compatibility (though we won't use them anymore)
+    Map<int, double> paceBins = {};
+    for (int i = minPaceBin; i <= maxPaceBin; i++) {
+      paceBins[i] = 0;
+    }
+    
+    // Compute time spent in each segment
+    for (int i = 1; i < elevationPoints.length; i++) {
+      double segmentDistance = elevationPoints[i].x - elevationPoints[i-1].x;
+      
+      // Skip segments with zero or negative distance (data errors)
+      if (segmentDistance <= 0) continue;
+      
+      // Ensure we don't go out of bounds with smoothedGradients array
+      int gradientIndex = min(i, smoothedGradients.length - 1);
+      double gradientPercent = gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
+      double elevation = elevationPoints[i].y;
+      
+      // Calculate pace for this segment
+      double adjustment = calculateGradeAdjustment(gradientPercent);
+      double segmentPace = selectedPaceSeconds * adjustment;
+      segmentPace = max(segmentPace, minSegmentPace);
+      
+      // Calculate time for this segment in minutes
+      double segmentTime = (segmentDistance * segmentPace) / 60;
+      
+      // Add to elevation bins
+      for (int j = 0; j < elevationBreakpoints.length - 1; j++) {
+        if (elevation >= elevationBreakpoints[j] && elevation < elevationBreakpoints[j + 1]) {
+          elevationBins[j] = (elevationBins[j] ?? 0) + segmentTime;
+          break;
+        }
+      }
+      
+      // Add to gradient bins
+      for (int j = 0; j < gradientBreakpoints.length - 1; j++) {
+        if (gradientPercent >= gradientBreakpoints[j] && gradientPercent < gradientBreakpoints[j + 1]) {
+          gradientBins[j] = (gradientBins[j] ?? 0) + segmentTime;
+          break;
+        }
+      }
+      
+      // Add to pace bins (for compatibility, though we won't display them)
+      int paceBin = (segmentPace / 20).floor();
+      paceBins[paceBin] = (paceBins[paceBin] ?? 0) + segmentTime;
+    }
+    
+    // Check if any data was collected
+    bool hasElevationData = elevationBins.values.any((v) => v > 0);
+    bool hasGradientData = gradientBins.values.any((v) => v > 0);
+    
+    // Add placeholder if no data was collected (probably due to processing issues)
+    if (!hasElevationData) {
+      result['elevation']!.add(ChartData('No Elevation Data', 0));
+    }
+    if (!hasGradientData) {
+      result['gradient']!.add(ChartData('No Gradient Data', 0));
+    }
+    
+    // Convert to chart data format with custom labels
+    if (hasElevationData) {
+      for (int i = 0; i < elevationLabels.length; i++) {
+        if (elevationBins[i] != null && elevationBins[i]! > 0) {
+          result['elevation']!.add(ChartData(elevationLabels[i], elevationBins[i]!));
+        }
+      }
+    }
+    
+    // Keep pace data for compatibility (though we won't display it)
+    paceBins.forEach((bin, time) {
+      int lowerBound = bin * 20;
+      int minutes = lowerBound ~/ 60;
+      int seconds = lowerBound % 60;
+      int upperBound = (bin + 1) * 20;
+      int minutesUpper = upperBound ~/ 60;
+      int secondsUpper = upperBound % 60;
+      String label = '${minutes}:${seconds.toString().padLeft(2, '0')}-${minutesUpper}:${secondsUpper.toString().padLeft(2, '0')}';
+      result['pace']!.add(ChartData(label, time));
+    });
+    
+    // Convert gradient bins to chart data with custom labels
+    if (hasGradientData) {
+      for (int i = 0; i < gradientLabels.length; i++) {
+        if (gradientBins[i] != null && gradientBins[i]! > 0) {
+          result['gradient']!.add(ChartData(gradientLabels[i], gradientBins[i]!));
+        }
+      }
+    }
+    
+    // Keep the sorting logic for compatibility (but elevation and gradient bins are already sorted)
+    result['elevation']!.sort((a, b) {
+      // Handle special cases
+      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
+      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
+      
+      if (a.category.startsWith('>')) return 1;
+      if (b.category.startsWith('>')) return -1;
+      
+      try {
+        int aLower = int.parse(a.category.split('-')[0].replaceAll('m', ''));
+        int bLower = int.parse(b.category.split('-')[0].replaceAll('m', ''));
+        return aLower.compareTo(bLower);
+      } catch (e) {
+        return 0; // Default comparison if parsing fails
+      }
+    });
+    
+    result['pace']!.sort((a, b) {
+      // Handle special cases
+      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
+      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
+      
+      try {
+        // Extract minutes and seconds from pace range
+        List<String> aParts = a.category.split('-')[0].split(':');
+        List<String> bParts = b.category.split('-')[0].split(':');
+        
+        int aSeconds = int.parse(aParts[0]) * 60 + int.parse(aParts[1]);
+        int bSeconds = int.parse(bParts[0]) * 60 + int.parse(bParts[1]);
+        
+        return aSeconds.compareTo(bSeconds);
+      } catch (e) {
+        return 0; // Default comparison if parsing fails
+      }
+    });
+    
+    result['gradient']!.sort((a, b) {
+      // Handle special cases
+      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
+      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
+      
+      if (a.category.startsWith('<')) return -1;
+      if (b.category.startsWith('<')) return 1;
+      if (a.category.startsWith('>')) return 1;
+      if (b.category.startsWith('>')) return -1;
+      
+      try {
+        // Extract the lower bounds for comparison
+        int aLower = int.parse(a.category.split('-')[0].replaceAll('%', ''));
+        int bLower = int.parse(b.category.split('-')[0].replaceAll('%', ''));
+        return aLower.compareTo(bLower);
+      } catch (e) {
+        return 0; // Default comparison if parsing fails
+      }
+    });
+    
+    return result;
+  }
+
+  // Handle tap for checkpoint creation
+  void _handleTapForCheckpoint() {
+    if (hoveredDistance == null || !mounted) return;
+    
+    try {
+      if (_isPendingCheckpointCreation) {
+        // When we already have a pending checkpoint, clicking again anywhere cancels it
+        setState(() {
+          _isPendingCheckpointCreation = false;
+          _pendingCheckpointDistance = null;
+        });
+      } else {
+        // Start checkpoint creation
+        setState(() {
+          _isPendingCheckpointCreation = true;
+          _pendingCheckpointDistance = hoveredDistance;
+        });
+      }
+    } catch (e) {
+      // Reset state if an error occurs
+      setState(() {
+        _isPendingCheckpointCreation = false;
+        _pendingCheckpointDistance = null;
+      });
+    }
+  }
+  
+  // Get marker for pending checkpoint
+  List<Marker> _getPendingCheckpointMarker() {
+    if (_pendingCheckpointDistance == null) return [];
+    
+    int routePointIndex = _findRoutePointIndexForDistance(_pendingCheckpointDistance!);
+    if (routePointIndex < 0 || routePointIndex >= routePoints.length) return [];
+    
+    return [
+      Marker(
+        point: routePoints[routePointIndex],
+        child: Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: Colors.amber.withOpacity(0.7),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Colors.white,
+              width: 2,
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+  
+  // Create a checkpoint at the specified distance
+  void _createCheckpointAtDistance(double distance) {
+    if (elevationPoints.isEmpty) return;
+    
+    // Ensure distance is within valid range
+    distance = distance.clamp(0, elevationPoints.last.x);
+    
+    // Create a new checkpoint
+    final checkpoint = CheckpointData(distance: distance);
+    checkpoint.id = DateTime.now().millisecondsSinceEpoch.toString();
+    checkpoint.name = 'CP ${(checkpoints.length + 1)}';
+    
+    // If table not visible, make it visible
+    setState(() {
+      if (!showCheckpoints) {
+        showCheckpoints = true;
+      }
+      
+      // Add the checkpoint
+      checkpoints.add(checkpoint);
+      
+      // Add a finish checkpoint if this is the first one and it's not at the end
+      bool isFirstCheckpoint = checkpoints.length == 1;
+      bool isAtEnd = (distance - elevationPoints.last.x).abs() < 0.1;
+      if (isFirstCheckpoint && !isAtEnd && elevationPoints.isNotEmpty) {
+        // Create a finish checkpoint
+        final finishCheckpoint = CheckpointData(distance: elevationPoints.last.x);
+        finishCheckpoint.id = 'finish_${DateTime.now().millisecondsSinceEpoch}';
+        finishCheckpoint.name = 'Finish';
+        
+        // Add the finish checkpoint
+        checkpoints.add(finishCheckpoint);
+        
+        // Add focus node for finish checkpoint
+        final nameNode = FocusNode();
+        final distanceNode = FocusNode();
+        
+        if (!_isWeb) {
+          try {
+            nameNode.addListener(_onFocusChange);
+            distanceNode.addListener(_onFocusChange);
+          } catch (e) {
+            // Silently handle any focus node errors
+          }
+        }
+        
+        _nameFocusNodes.add(nameNode);
+        _distanceFocusNodes.add(distanceNode);
+      }
+      
+      // Add new focus nodes for this checkpoint
+      final nameNode = FocusNode();
+      final distanceNode = FocusNode();
+      
+      // Add focus listeners only if not on web
+      if (!_isWeb) {
+        try {
+          nameNode.addListener(_onFocusChange);
+          distanceNode.addListener(_onFocusChange);
+        } catch (e) {
+          // Silently handle any focus node errors
+        }
+      }
+      
+      _nameFocusNodes.add(nameNode);
+      _distanceFocusNodes.add(distanceNode);
+      
+      // Sort checkpoints by distance
+      checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+      
+      // Recalculate metrics for all checkpoints
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+  }
+  
+  // Helper method to build statistic cards
+  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Helper method to build bar charts
+  Widget _buildBarChart(String title, List<ChartData> data, Color color) {
+    // Find the maximum value to normalize bars
+    double maxValue = 0;
+    for (var item in data) {
+      maxValue = max(maxValue, item.value);
+    }
+    
+    return Column(
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 200,
+          padding: const EdgeInsets.all(8.0),
+          child: data.isEmpty
+              ? const Center(child: Text('No data available'))
+              : ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: data.length,
+                  itemBuilder: (context, index) {
+                    final item = data[index];
+                    
+                    // Check if this is a special message (no data, insufficient data)
+                    bool isSpecialMessage = item.category.contains('No ') || 
+                                           item.category.contains('Insufficient');
+                    
+                    // Special handling for message items
+                    if (isSpecialMessage) {
+                      return Container(
+                        width: 120,
+                        padding: const EdgeInsets.all(8),
+                        alignment: Alignment.center,
+                        child: Text(
+                          item.category,
+                          style: TextStyle(
+                            color: color.withOpacity(0.8),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    }
+                    
+                    // Normal bar chart item
+                    final normalizedHeight = maxValue > 0 ? item.value / maxValue : 0;
+                    
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Container(
+                              width: 75,
+                              alignment: Alignment.bottomCenter,
+                              child: Container(
+                                width: 75,
+                                height: max(20, 160 * normalizedHeight.toDouble()),
+                                decoration: BoxDecoration(
+                                  color: color.withOpacity(0.7),
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(4),
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '${item.value.toInt()}min',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          SizedBox(
+                            width: 75,
+                            child: Text(
+                              item.category,
+                              style: const TextStyle(fontSize: 10),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
   }
 } 

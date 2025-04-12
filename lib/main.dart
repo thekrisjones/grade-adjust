@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/route_analyzer_screen.dart';
 import 'screens/pace_calculator_screen.dart';
+import 'screens/stairs_calculator_screen.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 
@@ -47,6 +48,7 @@ class _MainScreenState extends State<MainScreen> {
   static const List<Widget> _screens = [
     RouteAnalyzerScreen(),
     PaceCalculatorScreen(),
+    StairsCalculatorScreen(),
   ];
 
   @override
@@ -68,6 +70,10 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.speed),
             label: 'Pace Calculator',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.stairs),
+            label: 'Stairs Calculator',
           ),
         ],
       ),
