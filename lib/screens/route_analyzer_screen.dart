@@ -147,7 +147,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     
     for (int i = 0; i < elevationPoints.length; i++) {
       if (i == 0) {
-        newTimePoints.add(FlSpot(0, 0));
+        newTimePoints.add(const FlSpot(0, 0));
         continue;
       }
 
@@ -224,7 +224,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           
           // Verify that the GPX data contains valid tracks
           if (gpxData?.trks.isEmpty ?? true) {
-            throw FormatException('No track data found in the GPX file');
+            throw const FormatException('No track data found in the GPX file');
           }
           
           // Verify at least one track segment has points
@@ -240,7 +240,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           }
           
           if (!hasPoints) {
-            throw FormatException('No track points found in the GPX file');
+            throw const FormatException('No track points found in the GPX file');
           }
           
           processGpxData();
@@ -1028,7 +1028,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
                                                 if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
                                                   return Marker(
-                                                    point: LatLng(0, 0),
+                                                    point: const LatLng(0, 0),
                                                     width: 0,
                                                     height: 0,
                                                     child: Container(),
@@ -1297,7 +1297,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             maxY: maxElevRounded, // Use rounded value for even intervals
                             minX: 0,
                             maxX: elevationPoints.last.x,
-                            lineTouchData: LineTouchData(
+                            lineTouchData: const LineTouchData(
                               enabled: false, // Disable built-in hover interactions
                             ),
                           ),
@@ -2563,7 +2563,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       int upperBound = (bin + 1) * 20;
       int minutesUpper = upperBound ~/ 60;
       int secondsUpper = upperBound % 60;
-      String label = '${minutes}:${seconds.toString().padLeft(2, '0')}-${minutesUpper}:${secondsUpper.toString().padLeft(2, '0')}';
+      String label = '$minutes:${seconds.toString().padLeft(2, '0')}-$minutesUpper:${secondsUpper.toString().padLeft(2, '0')}';
       result['pace']!.add(ChartData(label, time));
     });
     

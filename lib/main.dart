@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Route Analyzer',
+      title: 'Trail Toolbox',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
@@ -65,7 +65,7 @@ class _MainScreenState extends State<MainScreen> {
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.map),
-            label: 'Route Analyzer',
+            label: 'Race Planner',
           ),
           NavigationDestination(
             icon: Icon(Icons.speed),

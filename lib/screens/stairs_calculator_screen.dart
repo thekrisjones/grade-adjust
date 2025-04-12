@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Required for input formatters
-import 'dart:math' show pow;
 
 class StairsCalculatorScreen extends StatefulWidget {
   const StairsCalculatorScreen({super.key});
