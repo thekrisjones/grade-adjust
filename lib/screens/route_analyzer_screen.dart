@@ -61,6 +61,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   List<LatLng> routePoints = [];
   List<FlSpot> elevationPoints = [];
   List<FlSpot> timePoints = []; // Points for time graph
+  List<FlSpot> pacePoints = []; // Points for pace graph
   List<double> cumulativeElevationGain = []; // Track cumulative elevation gain at each point
   List<double> cumulativeElevationLoss = []; // Track cumulative elevation loss at each point
   double? maxElevation;
@@ -103,6 +104,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   static const double minSegmentPace = 120; // 2:00 min/km
   // Remove the flag to show adjusted pace column
 
+  // Add state variables for min/max pace for chart scaling & color
+  double _minPace = 90; // Y-axis min (clamped)
+  double _maxPace = 1200; // Y-axis max (clamped)
+  double _minRawPace = 90; // For color scaling (unclamped)
+  double _maxRawPace = 1200; // For color scaling (unclamped)
+
   String formatPace(double seconds) {
     int mins = (seconds / 60).floor();
     int secs = (seconds % 60).round();
@@ -123,7 +130,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (elevationPoints.isEmpty || smoothedGradients.isEmpty) return;
     
     List<FlSpot> newTimePoints = [];
+    List<FlSpot> newPacePoints = []; // <-- Add this
     double cumulativeTime = 0;
+    double minCalculatedPace = double.infinity; // Track min/max pace for chart scaling
+    double maxCalculatedPace = double.negativeInfinity;
     
     // Get segment boundaries based on checkpoints
     List<double> segmentBoundaries = [];
@@ -148,6 +158,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     for (int i = 0; i < elevationPoints.length; i++) {
       if (i == 0) {
         newTimePoints.add(const FlSpot(0, 0));
+        // Skip pace point for index 0, calculate starting from first segment
         continue;
       }
 
@@ -155,7 +166,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       double segmentDistance = elevationPoints[i].x - elevationPoints[i-1].x;
       
       // Get grade adjustment factor for this segment
-      double adjustment = calculateGradeAdjustment(smoothedGradients[i]);
+      // Ensure gradient index is valid
+      int gradientIndex = i.clamp(0, smoothedGradients.length - 1);
+      double adjustment = calculateGradeAdjustment(smoothedGradients[gradientIndex]);
       
       // Calculate pace for this segment (in seconds per km)
       double basePace = selectedPaceSeconds;
@@ -171,10 +184,47 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       cumulativeTime += segmentTime;
       
       newTimePoints.add(FlSpot(elevationPoints[i].x, cumulativeTime));
+
+      // --- Calculate Real Pace ---
+      double realPace = basePace * adjustment;
+      
+      // Clamp real pace between 1:30 (90s) and 20:00 (1200s)
+      realPace = realPace.clamp(90.0, 1200.0);
+
+      newPacePoints.add(FlSpot(elevationPoints[i].x, realPace)); // Add pace point
+
+      // Update min/max calculated pace
+      minCalculatedPace = min(minCalculatedPace, realPace);
+      maxCalculatedPace = max(maxCalculatedPace, realPace);
+    }
+
+    // Add a starting pace point (equal to the first segment's pace)
+    if (newPacePoints.isNotEmpty) {
+      newPacePoints.insert(0, FlSpot(0, newPacePoints.first.y));
+      // Update min/max again in case the first point is the extreme
+      minCalculatedPace = min(minCalculatedPace, newPacePoints.first.y);
+      maxCalculatedPace = max(maxCalculatedPace, newPacePoints.first.y);
+    } else {
+       // Handle case with only one elevation point
+       if (elevationPoints.length == 1) {
+         double initialAdjustment = calculateGradeAdjustment(0); // Assume flat start
+         double initialPace = selectedPaceSeconds;
+         if (initialAdjustment.abs() > 0.01) {
+            initialPace = selectedPaceSeconds / initialAdjustment;
+         }
+         initialPace = initialPace.clamp(90.0, 1200.0);
+         newPacePoints.add(FlSpot(0, initialPace));
+         minCalculatedPace = initialPace;
+         maxCalculatedPace = initialPace;
+       }
     }
 
     setState(() {
       timePoints = newTimePoints;
+      pacePoints = newPacePoints; // <-- Update state
+      // Update state variables for min/max pace
+      _minPace = minCalculatedPace.isFinite ? minCalculatedPace : 90;
+      _maxPace = maxCalculatedPace.isFinite ? maxCalculatedPace : 1200;
       // Ensure summary data is updated when pace changes
       if (mounted) {
         // Using a post-frame callback to avoid setState inside another setState
@@ -184,6 +234,85 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           }
         });
       }
+    });
+  }
+
+  // Separate function to calculate pace points for the chart
+  void calculatePacePoints() {
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty) return;
+
+    List<FlSpot> newPacePoints = [];
+    double minClampedPace = double.infinity; // For Y-axis scaling
+    double maxClampedPace = double.negativeInfinity;
+    double minRawPace = double.infinity; // For color scaling
+    double maxRawPace = double.negativeInfinity;
+    double totalSegmentDistance = 0; // To calculate average spacing
+    int segmentCount = 0; // To calculate average spacing
+
+    double basePace = selectedPaceSeconds;
+
+    for (int i = 0; i < elevationPoints.length; i++) {
+      // Need adjustment factor even for the first point (index 0)
+      int gradientIndex = i.clamp(0, smoothedGradients.length - 1);
+      double adjustment = calculateGradeAdjustment(smoothedGradients[gradientIndex]);
+
+      // Calculate raw real pace: base pace * adjustment factor
+      double realPace = basePace * adjustment;
+      
+      // Update raw min/max for color scaling *before* clamping
+      minRawPace = min(minRawPace, realPace);
+      maxRawPace = max(maxRawPace, realPace);
+      
+      // Clamp real pace between 1:30 (90s) and 20:00 (1200s)
+      realPace = realPace.clamp(90.0, 1200.0);
+
+      newPacePoints.add(FlSpot(elevationPoints[i].x, realPace)); // Add pace point
+
+      // Update clamped min/max for Y-axis scaling
+      minClampedPace = min(minClampedPace, realPace);
+      maxClampedPace = max(maxClampedPace, realPace);
+
+      // Track segment distance for average spacing calculation
+      if (i > 0) {
+        double segmentDist = elevationPoints[i].x - elevationPoints[i-1].x; // in km
+        if (segmentDist > 0) {
+          totalSegmentDistance += segmentDist * 1000; // convert to meters
+          segmentCount++;
+        }
+      }
+    }
+
+    // Ensure pacePoints has at least one point if elevationPoints has one
+    if (elevationPoints.length == 1 && newPacePoints.isEmpty) {
+       // This case was handled inside the loop now, but double-check
+       int gradientIndex = 0.clamp(0, smoothedGradients.length - 1);
+       double adjustment = calculateGradeAdjustment(smoothedGradients[gradientIndex]);
+       double realPace = basePace * adjustment;
+       realPace = realPace.clamp(90.0, 1200.0);
+       newPacePoints.add(FlSpot(elevationPoints[0].x, realPace));
+       minClampedPace = realPace;
+       maxClampedPace = realPace;
+       minRawPace = realPace;
+       maxRawPace = realPace;
+    }
+
+    // Calculate adaptive window size for smoothing (~200m)
+    double avgSpacingMeters = segmentCount > 0 ? totalSegmentDistance / segmentCount : 10; // Default 10m if no segments
+    int pointWindowSize = (200 / avgSpacingMeters).round();
+    // Ensure window size is odd and within reasonable bounds (e.g., 3 to 21)
+    pointWindowSize = (pointWindowSize ~/ 2 * 2 + 1); // Make odd
+    pointWindowSize = pointWindowSize.clamp(3, 21); // Clamp between 3 and 21
+
+    // Smooth the calculated pace data using the adaptive window size
+    List<FlSpot> smoothedPacePoints = _smoothData(newPacePoints, pointWindowSize);
+
+    setState(() {
+      pacePoints = smoothedPacePoints; // Use smoothed data
+      // Update state variables for min/max pace (clamped for axis, raw for color)
+      _minPace = minClampedPace.isFinite ? minClampedPace : 90;
+      _maxPace = maxClampedPace.isFinite ? maxClampedPace : 1200;
+      _minRawPace = minRawPace.isFinite ? minRawPace : 90;
+      _maxRawPace = maxRawPace.isFinite ? maxRawPace : 1200;
     });
   }
 
@@ -307,6 +436,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       routePoints = [];
       elevationPoints = [];
       timePoints = [];
+      pacePoints = []; // <-- Reset pace points
       smoothedGradients = [];
       cumulativeDistance = 0.0;
       cumulativeElevationGain = [];
@@ -315,6 +445,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       minElevation = null;
       hoveredPointIndex = null;
       hoveredDistance = null;
+      _minPace = 90; // <-- Reset min/max pace
+      _maxPace = 1200;
       
       // Reset checkpoints
       checkpoints = [];
@@ -389,8 +521,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       List<double> gradients = calculateGradients(elevationPoints);
       smoothedGradients = smoothGradients(gradients, windowSize);
 
-      // Calculate initial time points
+      // Calculate initial time and pace points
       calculateTimePoints();
+      calculatePacePoints(); // <-- Call new function
       
       // Process waypoints from GPX file
       processWaypoints();
@@ -1261,6 +1394,186 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   },
                 ),
               ),
+              
+              // Pace chart
+              if (pacePoints.isNotEmpty) // Only show if data exists
+                Container(
+                  height: 200, // Same height as elevation chart
+                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 30.0),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Define pace range for Y-axis, add some padding
+                      final double paceRange = _maxPace - _minPace;
+                      // Ensure minY is not below 0, add 10% padding below min pace
+                      final double minY = max(0, _minPace - paceRange * 0.1);
+                      // Add 10% padding above max pace
+                      final double maxY = _maxPace + paceRange * 0.1;
+                      // Calculate interval for Y-axis labels, aiming for ~5 labels
+                      // Clamp interval between 15s and 120s (2 min)
+                      final double paceInterval = ((maxY - minY) / 5).clamp(15.0, 120.0);
+
+                      return GestureDetector(
+                        // Keep onTap for consistency, though not used for pace chart
+                        onTap: () => _handleTapForCheckpoint(),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.basic, // Indicate no special action
+                          onHover: (event) {
+                            // Use pacePoints.isEmpty check here as well
+                            if (pacePoints.isEmpty) return;
+
+                            final RenderBox? box = context.findRenderObject() as RenderBox?;
+                            if (box == null) return;
+
+                            try {
+                              final localPosition = box.globalToLocal(event.position);
+                              final double totalWidth = constraints.maxWidth;
+                              // Consistent offsets with elevation chart
+                              const double leftOffset = 56;
+                              const double rightOffset = 16;
+                              final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
+                              double normalizedX = (localPosition.dx - leftOffset) / chartAreaWidth;
+                              normalizedX = normalizedX.clamp(0.0, 1.0);
+                              // Use pacePoints.last.x which should be same as elevationPoints.last.x
+                              final double hoverDistance = normalizedX * pacePoints.last.x;
+
+                              // Find closest elevation point based on distance to sync hover
+                              final FlSpot elevSpot = findClosestElevationPoint(hoverDistance);
+                              final int elevIndex = _closestElevationPointIndex;
+                              if (elevIndex < 0) return;
+
+                              // Find corresponding route point for map marker
+                              int routePointIndex = _findRoutePointIndexForDistance(elevSpot.x);
+                              if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
+
+                              // Update shared hover state
+                              if (mounted) {
+                                setState(() {
+                                  hoveredPointIndex = routePointIndex; // Map marker
+                                  hoveredDistance = elevSpot.x;       // Distance for crosshair/info
+                                  hoveredSpot = elevSpot;          // Elevation spot for crosshair on elevation chart
+                                });
+                              }
+                            } catch (e) {
+                              debugPrint('Hover error on pace chart: $e');
+                            }
+                          },
+                          onExit: (_) {
+                            // Clear shared hover state
+                            if (mounted) {
+                              setState(() {
+                                hoveredPointIndex = null;
+                                hoveredDistance = null;
+                                hoveredSpot = null;
+                                _closestElevationPointIndex = -1;
+                              });
+                            }
+                          },
+                          child: LineChart(
+                            LineChartData(
+                              gridData: const FlGridData(show: true),
+                              borderData: FlBorderData(
+                                show: true,
+                                border: Border.all(color: Colors.grey.shade300, width: 1),
+                              ),
+                              titlesData: FlTitlesData(
+                                bottomTitles: AxisTitles(
+                                  axisNameWidget: const Padding(
+                                    padding: EdgeInsets.only(top: 12.0),
+                                    child: Text(
+                                      'Distance (km)',
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    reservedSize: 30,
+                                    // Use last distance from pacePoints
+                                    interval: (pacePoints.last.x / 10).clamp(1, double.infinity),
+                                    getTitlesWidget: (value, meta) {
+                                      return Text(
+                                        value.toInt().toString(),
+                                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                leftTitles: AxisTitles(
+                                  axisNameWidget: const Padding( // Add Y-axis label
+                                    padding: EdgeInsets.only(bottom: 8.0)
+                                  ),
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    reservedSize: 40, // Same as elevation chart
+                                    interval: paceInterval, // Use calculated interval
+                                    getTitlesWidget: (value, meta) {
+                                      // Don't show label exactly at min Y if it's 0 or below
+                                      if (value <= 0) return Container();
+                                      // Check if value is close to minY to potentially hide lowest label if needed
+                                      // if ((value - minY).abs() < 1) return Container();
+                                      
+                                      return Padding(
+                                        padding: const EdgeInsets.only(right: 8.0),
+                                        child: Text(
+                                          formatPaceAxisLabel(value), // Use pace formatter
+                                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold,),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                              ),
+                              lineBarsData: [
+                                LineChartBarData(
+                                  spots: pacePoints,
+                                  isCurved: true,
+                                  // Apply color gradient based on pace
+                                  gradient: LinearGradient(
+                                     // Use raw min/max pace for better color range
+                                     colors: pacePoints.map((spot) => getPaceColor(spot.y, _minRawPace, _maxRawPace)).toList(),
+                                     // Ensure stops match the number of colors
+                                     stops: pacePoints.length > 1 
+                                         ? pacePoints.map((spot) => spot.x / pacePoints.last.x).toList()
+                                         : [0.0, 1.0], // Default stops for single point case
+                                     begin: Alignment.centerLeft,
+                                     end: Alignment.centerRight,
+                                  ),
+                                  barWidth: 2,
+                                  dotData: FlDotData(
+                                     show: true,
+                                     checkToShowDot: (spot, barData) {
+                                        // Show dot only for the single point closest to the hover distance
+                                        // Use the index identified by the elevation chart hover
+                                        return _closestElevationPointIndex >= 0 && _closestElevationPointIndex < pacePoints.length && spot.x == pacePoints[_closestElevationPointIndex].x;
+                                      },
+                                      getDotPainter: (spot, percent, barData, index) {
+                                         // Use a consistent color for the hover dot
+                                         return FlDotCirclePainter(
+                                            radius: 6, // Same size as elevation chart dot
+                                            color: Colors.blue, // Consistent hover color
+                                            strokeWidth: 2,
+                                            strokeColor: Colors.white,
+                                          );
+                                       },
+                                   ),
+                                  belowBarData: BarAreaData(show: false), // No area below pace line
+                                ),
+                              ],
+                              minY: minY, // Use calculated min Y
+                              maxY: maxY, // Use calculated max Y
+                              minX: 0,
+                              maxX: pacePoints.last.x, // Use last distance from pacePoints
+                              lineTouchData: const LineTouchData(
+                                enabled: false, // Use MouseRegion for hover
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ), // End of Pace chart container
               
               // Add instruction for checkpoint creation if pending (MOVED HERE)
               if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null)
@@ -2913,5 +3226,56 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         ),
       ],
     );
+  }
+
+  // Helper function for pace color
+  Color getPaceColor(double pace, double minPace, double maxPace) {
+    // Normalize pace: 0 = min pace (fastest), 1 = max pace (slowest)
+    // Handle edge case where minPace == maxPace
+    double normalizedPace = (maxPace == minPace) ? 0.5 : (pace - minPace) / (maxPace - minPace);
+    normalizedPace = normalizedPace.clamp(0.0, 1.0); // Ensure it's within [0, 1]
+
+    // Hue range: 120 (green) down to 0 (red)
+    double hue = 120.0 * (1.0 - normalizedPace);
+    // Use full saturation and value for vibrant colors
+    return HSVColor.fromAHSV(1.0, hue, 1.0, 1.0).toColor();
+  }
+
+  // Formatting function for pace axis labels
+  String formatPaceAxisLabel(double seconds) {
+    if (seconds <= 0) return ""; // Don't show 0:00 or negative
+    int mins = (seconds / 60).floor();
+    int secs = (seconds % 60).round();
+    // Pad seconds to two digits
+    return '$mins:${secs.toString().padLeft(2, '0')}';
+  }
+
+  // Helper function to smooth data using a moving average
+  List<FlSpot> _smoothData(List<FlSpot> points, int windowSize) {
+    if (points.length < windowSize) {
+      return points; // Not enough data to smooth
+    }
+
+    List<FlSpot> smoothedPoints = [];
+    // Keep first few points as is
+    for (int i = 0; i < windowSize ~/ 2; i++) {
+       smoothedPoints.add(points[i]);
+    }
+
+    // Apply moving average
+    for (int i = windowSize ~/ 2; i < points.length - windowSize ~/ 2; i++) {
+      double sumY = 0;
+      for (int j = i - windowSize ~/ 2; j <= i + windowSize ~/ 2; j++) {
+        sumY += points[j].y;
+      }
+      smoothedPoints.add(FlSpot(points[i].x, sumY / windowSize));
+    }
+
+    // Keep last few points as is
+     for (int i = points.length - windowSize ~/ 2; i < points.length; i++) {
+       smoothedPoints.add(points[i]);
+     }
+
+    return smoothedPoints;
   }
 } 
