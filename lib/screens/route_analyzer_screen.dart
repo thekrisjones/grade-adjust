@@ -82,6 +82,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   // Add state for pending checkpoint creation
   bool _isPendingCheckpointCreation = false;
   double? _pendingCheckpointDistance;
+
+  // Add state for showing map
+  bool showMap = true;
   
   // Checkpoint-related state
   bool showCheckpoints = false;
@@ -188,8 +191,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       // --- Calculate Real Pace ---
       double realPace = basePace * adjustment;
       
-      // Clamp real pace between 1:30 (90s) and 20:00 (1200s)
-      realPace = realPace.clamp(90.0, 1200.0);
+      // Clamp real pace between 2:00 (120s) and 20:00 (1200s)
+      realPace = realPace.clamp(120.0, 1200.0);
 
       newPacePoints.add(FlSpot(elevationPoints[i].x, realPace)); // Add pace point
 
@@ -850,13 +853,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Route Analyzer')),
+      appBar: AppBar(title: const Text('Race Planner')),
       body: SingleChildScrollView(
         child: Column(
           children: [
-            ElevatedButton(
-              onPressed: pickGPXFile,
-              child: const Text('Upload GPX File'),
+            Center(
+              child: ElevatedButton(
+                onPressed: pickGPXFile,
+                child: const Text('Upload GPX File'),
+              ),
             ),
             if (routePoints.isNotEmpty) ...[
               // Pace slider and total time
@@ -980,192 +985,213 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   ],
                 ),
               ),
-              
-              // Map with reduced height
-              SizedBox(
-                height: 225,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Calculate container width based on available space
-                    final screenWidth = constraints.maxWidth;
-                    final double horizontalPadding = screenWidth > 600 ? 40.0 : 0.0;
-                    final double containerWidth = screenWidth - (horizontalPadding * 2);
-                    
-                    return Center(
-                      child: Container(
-                        width: containerWidth,
-                        decoration: BoxDecoration(
-                          border: screenWidth > 600 ? Border.all(color: Colors.grey.shade300, width: 1) : null,
-                          borderRadius: screenWidth > 600 ? BorderRadius.circular(8) : null,
-                        ),
-                        child: Stack(
-                          children: [
-                            LayoutBuilder(
-                              builder: (context, mapConstraints) {
-                                return GestureDetector(
-                                  onTap: () => _handleTapForCheckpoint(),
-                                  child: MouseRegion(
-                                    cursor: hoveredDistance != null ? 
-                                           SystemMouseCursors.click : 
-                                           SystemMouseCursors.basic,
-                                    onHover: (event) {
-                                      // Throttle hover events for better performance
-                                      if (_mapDebounceTimer?.isActive ?? false) return;
-                                      
-                                      // Safely access the render box
-                                      final RenderBox? box = context.findRenderObject() as RenderBox?;
-                                      if (box == null) return;
-                                      
-                                      try {
-                                        final localPosition = box.globalToLocal(event.position);
-                                        
-                                        final closestIndex = findClosestRoutePoint(localPosition, mapConstraints);
-                                        if (closestIndex >= 0 && closestIndex < routePoints.length) {
-                                          // Map the route point index to an elevation point index
-                                          int elevationIndex;
+              Column(
+                children: [
+                   // Map toggle button
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          showMap = !showMap;
+                        });
+                      },
+                      icon: Icon(showMap ? Icons.visibility_off : Icons.visibility),
+                      label: Text(showMap ? 'Hide Map' : 'Show Map'),
+                    ),
+                  ),      
+                  // Map container
+                  if (showMap)
+                  // Map with reduced height
+                  SizedBox(
+                    height: 225,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        // Calculate container width based on available space
+                        final screenWidth = constraints.maxWidth;
+                        final double horizontalPadding = screenWidth > 600 ? 40.0 : 0.0;
+                        final double containerWidth = screenWidth - (horizontalPadding * 2);
+                        
+                        return Center(
+                          child: Container(
+                            width: containerWidth,
+                            decoration: BoxDecoration(
+                              border: screenWidth > 600 ? Border.all(color: Colors.grey.shade300, width: 1) : null,
+                              borderRadius: screenWidth > 600 ? BorderRadius.circular(8) : null,
+                            ),
+                            child: Stack(
+                              children: [
+                                LayoutBuilder(
+                                  builder: (context, mapConstraints) {
+                                    return GestureDetector(
+                                      onTap: () => _handleTapForCheckpoint(),
+                                      child: MouseRegion(
+                                        cursor: hoveredDistance != null ? 
+                                              SystemMouseCursors.click : 
+                                              SystemMouseCursors.basic,
+                                        onHover: (event) {
+                                          // Throttle hover events for better performance
+                                          if (_mapDebounceTimer?.isActive ?? false) return;
                                           
-                                          // If the arrays have the same length, use direct mapping
-                                          if (routePoints.length == elevationPoints.length) {
-                                            elevationIndex = closestIndex;
-                                          } else {
-                                            // Otherwise, use proportional mapping
-                                            double ratio = elevationPoints.length / routePoints.length;
-                                            elevationIndex = (closestIndex * ratio).round();
-                                            elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
+                                          // Safely access the render box
+                                          final RenderBox? box = context.findRenderObject() as RenderBox?;
+                                          if (box == null) return;
+                                          
+                                          try {
+                                            final localPosition = box.globalToLocal(event.position);
+                                            
+                                            final closestIndex = findClosestRoutePoint(localPosition, mapConstraints);
+                                            if (closestIndex >= 0 && closestIndex < routePoints.length) {
+                                              // Map the route point index to an elevation point index
+                                              int elevationIndex;
+                                              
+                                              // If the arrays have the same length, use direct mapping
+                                              if (routePoints.length == elevationPoints.length) {
+                                                elevationIndex = closestIndex;
+                                              } else {
+                                                // Otherwise, use proportional mapping
+                                                double ratio = elevationPoints.length / routePoints.length;
+                                                elevationIndex = (closestIndex * ratio).round();
+                                                elevationIndex = elevationIndex.clamp(0, elevationPoints.length - 1);
+                                              }
+                                              
+                                              // If we found a valid elevation point, update the chart and info panel
+                                              if (elevationIndex >= 0 && elevationIndex < elevationPoints.length && mounted) {
+                                                // Update all state in a single setState call for immediate visual feedback
+                                                setState(() {
+                                                  hoveredPointIndex = closestIndex;
+                                                  _closestElevationPointIndex = elevationIndex;
+                                                  hoveredDistance = elevationPoints[elevationIndex].x;
+                                                  hoveredSpot = elevationPoints[elevationIndex];
+                                                });
+                                              }
+                                              
+                                              // Set a very short throttle to prevent too many updates
+                                              _mapDebounceTimer = Timer(const Duration(milliseconds: 5), () {});
+                                            }
+                                          } catch (e) {
+                                            // Silently handle any errors during hover handling
                                           }
-                                          
-                                          // If we found a valid elevation point, update the chart and info panel
-                                          if (elevationIndex >= 0 && elevationIndex < elevationPoints.length && mounted) {
-                                            // Update all state in a single setState call for immediate visual feedback
+                                        },
+                                        onExit: (_) {
+                                          if (mounted) {
                                             setState(() {
-                                              hoveredPointIndex = closestIndex;
-                                              _closestElevationPointIndex = elevationIndex;
-                                              hoveredDistance = elevationPoints[elevationIndex].x;
-                                              hoveredSpot = elevationPoints[elevationIndex];
+                                              hoveredPointIndex = null;
+                                              hoveredDistance = null;
+                                              hoveredSpot = null;
+                                              _closestElevationPointIndex = -1;
                                             });
                                           }
-                                          
-                                          // Set a very short throttle to prevent too many updates
-                                          _mapDebounceTimer = Timer(const Duration(milliseconds: 5), () {});
-                                        }
-                                      } catch (e) {
-                                        // Silently handle any errors during hover handling
-                                      }
-                                    },
-                                    onExit: (_) {
-                                      if (mounted) {
-                                        setState(() {
-                                          hoveredPointIndex = null;
-                                          hoveredDistance = null;
-                                          hoveredSpot = null;
-                                          _closestElevationPointIndex = -1;
-                                        });
-                                      }
-                                    },
-                                    child: FlutterMap(
-                                      mapController: mapController,
-                                      options: MapOptions(
-                                        initialCameraFit: CameraFit.bounds(
-                                          bounds: LatLngBounds.fromPoints(routePoints),
-                                          padding: const EdgeInsets.all(20.0),
-                                        ),
-                                      ),
-                                      children: [
-                                        TileLayer(
-                                          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                          userAgentPackageName: 'com.example.app',
-                                          tileProvider: CancellableNetworkTileProvider(),
-                                        ),
-                                        PolylineLayer(
-                                          polylines: [
-                                            Polyline(
-                                              points: routePoints,
-                                              color: Colors.blue,
-                                              strokeWidth: 3,
+                                        },
+                                        child: FlutterMap(
+                                          mapController: mapController,
+                                          options: MapOptions(
+                                            initialCameraFit: CameraFit.bounds(
+                                              bounds: LatLngBounds.fromPoints(routePoints),
+                                              padding: const EdgeInsets.all(20.0),
                                             ),
-                                          ],
-                                        ),
-                                        if (hoveredPointIndex != null && hoveredPointIndex! < routePoints.length)
-                                          MarkerLayer(
-                                            markers: [
-                                              Marker(
-                                                point: routePoints[hoveredPointIndex!],
-                                                child: Container(
-                                                  width: 3, // Reduced from 5 to 3 (40% smaller)
-                                                  height: 3, // Reduced from 5 to 3 (40% smaller)
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.blue,
-                                                    shape: BoxShape.circle,
-                                                    border: Border.all(
-                                                      color: Colors.white,
-                                                      width: 1,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
                                           ),
-                                        // Add markers for checkpoints and pending checkpoint
-                                        MarkerLayer(
-                                          markers: [
-                                            // Regular checkpoints
-                                            if (showCheckpoints)
-                                              ...checkpoints.map((checkpoint) {
-                                                // Find the closest route point to this checkpoint distance
-                                                int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
-                                                if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
-                                                  return Marker(
-                                                    point: const LatLng(0, 0),
-                                                    width: 0,
-                                                    height: 0,
-                                                    child: Container(),
-                                                  );
-                                                }
-                                                
-                                                return Marker(
-                                                  point: routePoints[routePointIndex],
-                                                  child: Container(
-                                                    width: 12,
-                                                    height: 12,
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.red.withOpacity(0.7),
-                                                      shape: BoxShape.circle,
-                                                      border: Border.all(
-                                                        color: Colors.white,
-                                                        width: 2,
+                                          children: [
+                                            TileLayer(
+                                              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                              userAgentPackageName: 'com.example.app',
+                                              tileProvider: CancellableNetworkTileProvider(),
+                                            ),
+                                            PolylineLayer(
+                                              polylines: [
+                                                Polyline(
+                                                  points: routePoints,
+                                                  color: Colors.blue,
+                                                  strokeWidth: 3,
+                                                ),
+                                              ],
+                                            ),
+                                            if (hoveredPointIndex != null && hoveredPointIndex! < routePoints.length)
+                                              MarkerLayer(
+                                                markers: [
+                                                  Marker(
+                                                    point: routePoints[hoveredPointIndex!],
+                                                    child: Container(
+                                                      width: 3, // Reduced from 5 to 3 (40% smaller)
+                                                      height: 3, // Reduced from 5 to 3 (40% smaller)
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.blue,
+                                                        shape: BoxShape.circle,
+                                                        border: Border.all(
+                                                          color: Colors.white,
+                                                          width: 1,
+                                                        ),
                                                       ),
                                                     ),
                                                   ),
-                                                );
-                                              }),
-                                            // Show pending checkpoint if applicable
-                                            if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null) 
-                                              ..._getPendingCheckpointMarker(),
+                                                ],
+                                              ),
+                                            // Add markers for checkpoints and pending checkpoint
+                                            MarkerLayer(
+                                              markers: [
+                                                // Regular checkpoints
+                                                if (showCheckpoints)
+                                                  ...checkpoints.map((checkpoint) {
+                                                    // Find the closest route point to this checkpoint distance
+                                                    int routePointIndex = _findRoutePointIndexForDistance(checkpoint.distance);
+                                                    if (routePointIndex < 0 || routePointIndex >= routePoints.length) {
+                                                      return Marker(
+                                                        point: const LatLng(0, 0),
+                                                        width: 0,
+                                                        height: 0,
+                                                        child: Container(),
+                                                      );
+                                                    }
+                                                    
+                                                    return Marker(
+                                                      point: routePoints[routePointIndex],
+                                                      child: Container(
+                                                        width: 12,
+                                                        height: 12,
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.red.withOpacity(0.7),
+                                                          shape: BoxShape.circle,
+                                                          border: Border.all(
+                                                            color: Colors.white,
+                                                            width: 2,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }),
+                                                // Show pending checkpoint if applicable
+                                                if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null) 
+                                                  ..._getPendingCheckpointMarker(),
+                                              ],
+                                            ),
                                           ],
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-              
+
               // Elevation chart
               Container(
                 height: 200,
-                padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 30.0),
+                padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 16.0),
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     // Calculate even 200m intervals for elevation ticks
-                    double minElevRounded = (minElevation! / 200).floor() * 200;
-                    double maxElevRounded = (maxElevation! / 200).ceil() * 200;
+                    double minElevRounded = max(minElevation! / 200.floor() * 200,0);
+                    double maxElevRounded = maxElevation! / 200.ceil() * 200;
+
+                    // Define chart are constants
+                    
                     
                     return GestureDetector(
                       onTap: () => _handleTapForCheckpoint(),
@@ -1394,187 +1420,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   },
                 ),
               ),
-              
-              // Pace chart
-              if (pacePoints.isNotEmpty) // Only show if data exists
-                Container(
-                  height: 200, // Same height as elevation chart
-                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 30.0),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Define pace range for Y-axis, add some padding
-                      final double paceRange = _maxPace - _minPace;
-                      // Ensure minY is not below 0, add 10% padding below min pace
-                      final double minY = max(0, _minPace - paceRange * 0.1);
-                      // Add 10% padding above max pace
-                      final double maxY = _maxPace + paceRange * 0.1;
-                      // Calculate interval for Y-axis labels, aiming for ~5 labels
-                      // Clamp interval between 15s and 120s (2 min)
-                      final double paceInterval = ((maxY - minY) / 5).clamp(15.0, 120.0);
 
-                      return GestureDetector(
-                        // Keep onTap for consistency, though not used for pace chart
-                        onTap: () => _handleTapForCheckpoint(),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.basic, // Indicate no special action
-                          onHover: (event) {
-                            // Use pacePoints.isEmpty check here as well
-                            if (pacePoints.isEmpty) return;
-
-                            final RenderBox? box = context.findRenderObject() as RenderBox?;
-                            if (box == null) return;
-
-                            try {
-                              final localPosition = box.globalToLocal(event.position);
-                              final double totalWidth = constraints.maxWidth;
-                              // Consistent offsets with elevation chart
-                              const double leftOffset = 56;
-                              const double rightOffset = 16;
-                              final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
-                              double normalizedX = (localPosition.dx - leftOffset) / chartAreaWidth;
-                              normalizedX = normalizedX.clamp(0.0, 1.0);
-                              // Use pacePoints.last.x which should be same as elevationPoints.last.x
-                              final double hoverDistance = normalizedX * pacePoints.last.x;
-
-                              // Find closest elevation point based on distance to sync hover
-                              final FlSpot elevSpot = findClosestElevationPoint(hoverDistance);
-                              final int elevIndex = _closestElevationPointIndex;
-                              if (elevIndex < 0) return;
-
-                              // Find corresponding route point for map marker
-                              int routePointIndex = _findRoutePointIndexForDistance(elevSpot.x);
-                              if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
-
-                              // Update shared hover state
-                              if (mounted) {
-                                setState(() {
-                                  hoveredPointIndex = routePointIndex; // Map marker
-                                  hoveredDistance = elevSpot.x;       // Distance for crosshair/info
-                                  hoveredSpot = elevSpot;          // Elevation spot for crosshair on elevation chart
-                                });
-                              }
-                            } catch (e) {
-                              debugPrint('Hover error on pace chart: $e');
-                            }
-                          },
-                          onExit: (_) {
-                            // Clear shared hover state
-                            if (mounted) {
-                              setState(() {
-                                hoveredPointIndex = null;
-                                hoveredDistance = null;
-                                hoveredSpot = null;
-                                _closestElevationPointIndex = -1;
-                              });
-                            }
-                          },
-                          child: LineChart(
-                            LineChartData(
-                              gridData: const FlGridData(show: true),
-                              borderData: FlBorderData(
-                                show: true,
-                                border: Border.all(color: Colors.grey.shade300, width: 1),
-                              ),
-                              titlesData: FlTitlesData(
-                                bottomTitles: AxisTitles(
-                                  axisNameWidget: const Padding(
-                                    padding: EdgeInsets.only(top: 12.0),
-                                    child: Text(
-                                      'Distance (km)',
-                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                  sideTitles: SideTitles(
-                                    showTitles: true,
-                                    reservedSize: 30,
-                                    // Use last distance from pacePoints
-                                    interval: (pacePoints.last.x / 10).clamp(1, double.infinity),
-                                    getTitlesWidget: (value, meta) {
-                                      return Text(
-                                        value.toInt().toString(),
-                                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                leftTitles: AxisTitles(
-                                  axisNameWidget: const Padding( // Add Y-axis label
-                                    padding: EdgeInsets.only(bottom: 8.0)
-                                  ),
-                                  sideTitles: SideTitles(
-                                    showTitles: true,
-                                    reservedSize: 40, // Same as elevation chart
-                                    interval: paceInterval, // Use calculated interval
-                                    getTitlesWidget: (value, meta) {
-                                      // Don't show label exactly at min Y if it's 0 or below
-                                      if (value <= 0) return Container();
-                                      // Check if value is close to minY to potentially hide lowest label if needed
-                                      // if ((value - minY).abs() < 1) return Container();
-                                      
-                                      return Padding(
-                                        padding: const EdgeInsets.only(right: 8.0),
-                                        child: Text(
-                                          formatPaceAxisLabel(value), // Use pace formatter
-                                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold,),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                              ),
-                              lineBarsData: [
-                                LineChartBarData(
-                                  spots: pacePoints,
-                                  isCurved: true,
-                                  // Apply color gradient based on pace
-                                  gradient: LinearGradient(
-                                     // Use raw min/max pace for better color range
-                                     colors: pacePoints.map((spot) => getPaceColor(spot.y, _minRawPace, _maxRawPace)).toList(),
-                                     // Ensure stops match the number of colors
-                                     stops: pacePoints.length > 1 
-                                         ? pacePoints.map((spot) => spot.x / pacePoints.last.x).toList()
-                                         : [0.0, 1.0], // Default stops for single point case
-                                     begin: Alignment.centerLeft,
-                                     end: Alignment.centerRight,
-                                  ),
-                                  barWidth: 2,
-                                  dotData: FlDotData(
-                                     show: true,
-                                     checkToShowDot: (spot, barData) {
-                                        // Show dot only for the single point closest to the hover distance
-                                        // Use the index identified by the elevation chart hover
-                                        return _closestElevationPointIndex >= 0 && _closestElevationPointIndex < pacePoints.length && spot.x == pacePoints[_closestElevationPointIndex].x;
-                                      },
-                                      getDotPainter: (spot, percent, barData, index) {
-                                         // Use a consistent color for the hover dot
-                                         return FlDotCirclePainter(
-                                            radius: 6, // Same size as elevation chart dot
-                                            color: Colors.blue, // Consistent hover color
-                                            strokeWidth: 2,
-                                            strokeColor: Colors.white,
-                                          );
-                                       },
-                                   ),
-                                  belowBarData: BarAreaData(show: false), // No area below pace line
-                                ),
-                              ],
-                              minY: minY, // Use calculated min Y
-                              maxY: maxY, // Use calculated max Y
-                              minX: 0,
-                              maxX: pacePoints.last.x, // Use last distance from pacePoints
-                              lineTouchData: const LineTouchData(
-                                enabled: false, // Use MouseRegion for hover
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ), // End of Pace chart container
-              
               // Add instruction for checkpoint creation if pending (MOVED HERE)
               if (_isPendingCheckpointCreation && _pendingCheckpointDistance != null)
                 Container(
@@ -1637,36 +1483,55 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       const SizedBox(height: 16),
                       
                       // Total statistics
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          _buildStatCard(
-                            'Total Distance',
-                            '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
-                            Icons.straighten,
-                            Colors.blue,
-                          ),
-                          _buildStatCard(
-                            'Elevation Gain',
-                            '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
-                            Icons.trending_up,
-                            Colors.green,
-                          ),
-                          _buildStatCard(
-                            'Elevation Loss',
-                            '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
-                            Icons.trending_down,
-                            Colors.red,
-                          ),
-                          _buildStatCard(
-                            'Estimated Time',
-                            timePoints.isNotEmpty ? _formatTotalTime(timePoints.last.y) : '0m',
-                            Icons.timer,
-                            Colors.orange,
-                          ),
-                        ],
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          // Use Wrap for responsive layout
+                          return Wrap(
+                            spacing: 8.0, // Horizontal spacing between cards
+                            runSpacing: 8.0, // Vertical spacing between rows
+                            alignment: WrapAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Total Distance',
+                                  '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
+                                  Icons.straighten,
+                                  Colors.blue,
+                                ),
+                              ),
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Elevation Gain',
+                                  '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
+                                  Icons.trending_up,
+                                  Colors.green,
+                                ),
+                              ),
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Elevation Loss',
+                                  '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
+                                  Icons.trending_down,
+                                  Colors.red,
+                                ),
+                              ),
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Estimated Time',
+                                  timePoints.isNotEmpty ? _formatTotalTime(timePoints.last.y) : '0m',
+                                  Icons.timer,
+                                  Colors.orange,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 12),
                       
                       // Bar charts
                       Column(
@@ -1678,12 +1543,19 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             calculateRouteSummaryData()['elevation'] ?? [],
                             Colors.blue,
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 12),
                           // Gradient distribution chart
                           _buildBarChart(
                             'Time at Gradient',
                             calculateRouteSummaryData()['gradient'] ?? [],
                             Colors.red,
+                          ),
+                          const SizedBox(height: 12),
+                          // Pace distribution chart
+                          _buildBarChart(
+                            'Time at Pace',
+                            calculateRouteSummaryData()['pace'] ?? [],
+                            Colors.green,
                           ),
                         ],
                       ),
@@ -2767,55 +2639,68 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     
     // Define custom elevation bins (0-500, 500-1000, 1000-1500, 1500-2000, 2000-2500, 2500-3000, >3000)
     List<String> elevationLabels = [
-      '0:500m', 
-      '500:1000m', 
-      '1000:1500m', 
-      '1500:2000m', 
-      '2000:2500m', 
-      '2500:3000m', 
-      '>3000m'
+      '    0 to 500m', 
+      ' 500 to 1000m', 
+      '1000 to 1500m', 
+      '1500 to 2000m', 
+      '2000 to 2500m', 
+      '2500 to 3000m', 
+      '       >3000m'
     ];
     
     List<double> elevationBreakpoints = [0, 500, 1000, 1500, 2000, 2500, 3000, double.infinity];
     
     // Define custom gradient bins
     List<String> gradientLabels = [
-      '<-25%',
-      '-25%:-20%',
-      '-20%:-15%',
-      '-15%:-10%',
-      '-10%:-5%',
-      '-5%:0%',
-      '0%:5%',
-      '5%:10%',
-      '10%:15%',
-      '15%:20%',
-      '20%:25%',
-      '>25%'
+      '        <-25%',
+      ' -25% to -20%',
+      ' -20% to -15%',
+      ' -15% to -10%',
+      '  -10% to -5%',
+      '    -5% to 0%',
+      '     0% to 5%',
+      '    5% to 10%',
+      '   10% to 15%',
+      '   15% to 20%',
+      '   20% to 25%',
+      '         >25%'
     ];
     
     List<double> gradientBreakpoints = [
       double.negativeInfinity, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, double.infinity
     ];
     
-    // For pace: 20 s/km bins (keep as before, though we won't use it anymore)
-    int minPaceBin = (minSegmentPace / 20).floor();
-    int maxPaceBin = ((selectedPaceSeconds * 3) / 20).ceil(); // Allow for slower paces due to steep hills
+// Define pace bins (30s intervals)
+    List<String> paceLabels = [
+      '         <3:00',
+      '  3:00 to 4:00',
+      '  4:00 to 5:00',
+      '  5:00 to 6:00',
+      '  6:00 to 7:00',
+      '  7:00 to 8:00',
+      '  8:00 to 9:00',
+      ' 9:00 to 10:00',
+      '10:00 to 11:00',
+      '11:00 to 12:00',
+      '        >12:00',
+    ];
     
-    // Initialize custom bins with zeros
+    List<double> paceBreakpoints = [
+      0, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, double.infinity
+    ];
+
+    // Initialize bins
     Map<int, double> elevationBins = {};
+    Map<int, double> gradientBins = {};
+    Map<int, double> paceBins = {};
+    
     for (int i = 0; i < elevationBreakpoints.length - 1; i++) {
       elevationBins[i] = 0;
     }
-    
-    Map<int, double> gradientBins = {};
     for (int i = 0; i < gradientBreakpoints.length - 1; i++) {
       gradientBins[i] = 0;
     }
-    
-    // Keep the pace bins for compatibility (though we won't use them anymore)
-    Map<int, double> paceBins = {};
-    for (int i = minPaceBin; i <= maxPaceBin; i++) {
+    for (int i = 0; i < paceBreakpoints.length - 1; i++) {
       paceBins[i] = 0;
     }
     
@@ -2855,14 +2740,29 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         }
       }
       
-      // Add to pace bins (for compatibility, though we won't display them)
-      int paceBin = (segmentPace / 20).floor();
-      paceBins[paceBin] = (paceBins[paceBin] ?? 0) + segmentTime;
+    }
+
+    // Compute time spent in each segment
+    for (int i = 1; i < pacePoints.length; i++) {
+      double segmentDistance = pacePoints[i].x - pacePoints[i-1].x;
+      if (segmentDistance <= 0) continue;
+
+      double segmentPace = pacePoints[i].y;
+      double segmentTime = (segmentDistance * segmentPace) / 60;
+
+      // Add to pace bins
+      for (int j = 0; j < paceBreakpoints.length - 1; j++) {
+        if (segmentPace >= paceBreakpoints[j] && segmentPace < paceBreakpoints[j + 1]) {
+          paceBins[j] = (paceBins[j] ?? 0) + segmentTime;
+          break;
+        }
+      }
     }
     
     // Check if any data was collected
     bool hasElevationData = elevationBins.values.any((v) => v > 0);
     bool hasGradientData = gradientBins.values.any((v) => v > 0);
+    bool hasPaceData = paceBins.values.any((v) => v > 0);
     
     // Add placeholder if no data was collected (probably due to processing issues)
     if (!hasElevationData) {
@@ -2871,7 +2771,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (!hasGradientData) {
       result['gradient']!.add(ChartData('No Gradient Data', 0));
     }
-    
+    if (!hasPaceData) {
+      result['pace']!.add(ChartData('No Pace Data', 0));
+    }
+
     // Convert to chart data format with custom labels
     if (hasElevationData) {
       for (int i = 0; i < elevationLabels.length; i++) {
@@ -2881,18 +2784,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       }
     }
     
-    // Keep pace data for compatibility (though we won't display it)
-    paceBins.forEach((bin, time) {
-      int lowerBound = bin * 20;
-      int minutes = lowerBound ~/ 60;
-      int seconds = lowerBound % 60;
-      int upperBound = (bin + 1) * 20;
-      int minutesUpper = upperBound ~/ 60;
-      int secondsUpper = upperBound % 60;
-      String label = '$minutes:${seconds.toString().padLeft(2, '0')}-$minutesUpper:${secondsUpper.toString().padLeft(2, '0')}';
-      result['pace']!.add(ChartData(label, time));
-    });
-    
     // Convert gradient bins to chart data with custom labels
     if (hasGradientData) {
       for (int i = 0; i < gradientLabels.length; i++) {
@@ -2901,63 +2792,14 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         }
       }
     }
-    
-    // Keep the sorting logic for compatibility (but elevation and gradient bins are already sorted)
-    result['elevation']!.sort((a, b) {
-      // Handle special cases
-      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
-      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
-      
-      if (a.category.startsWith('>')) return 1;
-      if (b.category.startsWith('>')) return -1;
-      
-      try {
-        int aLower = int.parse(a.category.split('-')[0].replaceAll('m', ''));
-        int bLower = int.parse(b.category.split('-')[0].replaceAll('m', ''));
-        return aLower.compareTo(bLower);
-      } catch (e) {
-        return 0; // Default comparison if parsing fails
+
+    if (hasPaceData) {
+      for (int i = 0; i < paceLabels.length; i++) {
+        if (paceBins[i] != null && paceBins[i]! > 0) {
+          result['pace']!.add(ChartData(paceLabels[i], paceBins[i]!));
+        }
       }
-    });
-    
-    result['pace']!.sort((a, b) {
-      // Handle special cases
-      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
-      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
-      
-      try {
-        // Extract minutes and seconds from pace range
-        List<String> aParts = a.category.split('-')[0].split(':');
-        List<String> bParts = b.category.split('-')[0].split(':');
-        
-        int aSeconds = int.parse(aParts[0]) * 60 + int.parse(aParts[1]);
-        int bSeconds = int.parse(bParts[0]) * 60 + int.parse(bParts[1]);
-        
-        return aSeconds.compareTo(bSeconds);
-      } catch (e) {
-        return 0; // Default comparison if parsing fails
-      }
-    });
-    
-    result['gradient']!.sort((a, b) {
-      // Handle special cases
-      if (a.category.contains('No ') || a.category.contains('Insufficient')) return -1;
-      if (b.category.contains('No ') || b.category.contains('Insufficient')) return 1;
-      
-      if (a.category.startsWith('<')) return -1;
-      if (b.category.startsWith('<')) return 1;
-      if (a.category.startsWith('>')) return 1;
-      if (b.category.startsWith('>')) return -1;
-      
-      try {
-        // Extract the lower bounds for comparison
-        int aLower = int.parse(a.category.split('-')[0].replaceAll('%', ''));
-        int bLower = int.parse(b.category.split('-')[0].replaceAll('%', ''));
-        return aLower.compareTo(bLower);
-      } catch (e) {
-        return 0; // Default comparison if parsing fails
-      }
-    });
+    }
     
     return result;
   }
@@ -3148,8 +2990,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           child: data.isEmpty
               ? const Center(child: Text('No data available'))
               : Wrap(
-                  spacing: 8.0, // Horizontal space between bars
-                  runSpacing: 16.0, // Vertical space between rows of bars
+                  spacing: 4.0, // Horizontal space between bars
+                  runSpacing: 8.0, // Vertical space between rows of bars
                   alignment: WrapAlignment.center, // Center the bars horizontally
                   children: data.map((item) {
                     // Check if this is a special message (no data, insufficient data)
@@ -3181,14 +3023,14 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     
                     // Use a fixed-size container for each bar element
                     return SizedBox(
-                      width: 75, // Keep bar width
-                      height: 180, // Set a fixed height for the column including text
+                      width: 50, // Keep bar width
+                      height: 250, // Set a fixed height for the column including text
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         mainAxisAlignment: MainAxisAlignment.end, // Align bottom of bar to bottom
                         children: [
                           Container(
-                            width: 75,
+                            width: 50,
                             height: barHeight,
                             decoration: BoxDecoration(
                               color: color.withOpacity(0.7),
@@ -3198,7 +3040,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             ),
                             alignment: Alignment.center,
                             child: Text(
-                              '${item.value.toInt()}min',
+                              '${item.value.toInt()} min',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 10,
@@ -3207,15 +3049,21 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             ),
                           ),
                           const SizedBox(height: 6),
-                          SizedBox(
-                            width: 75,
-                            // Allow text to take needed height within the fixed column height
-                            child: Text(
-                              item.category,
-                              style: const TextStyle(fontSize: 10),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                          Container(
+                            width: 50,
+                            height: 75,
+                            alignment: const Alignment(0.0,1.0),
+                            child: Center(
+                              child: RotatedBox(
+                                quarterTurns: 3,
+                                child: Text(
+                                  item.category,
+                                  style: const TextStyle(fontSize: 10),
+                                  textAlign: TextAlign.right,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             ),
                           ),
                         ],
