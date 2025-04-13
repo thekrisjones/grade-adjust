@@ -1215,7 +1215,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             
                             // Define clear left and right offsets
                             const double leftOffset = 56; // Left padding + axis labels
-                            const double rightOffset = 16; // Right padding
+                            const double rightOffset = 0; // Right padding
                             final double chartAreaWidth = totalWidth - leftOffset - rightOffset;
                             
                             // Calculate how far along the chart the mouse is (0.0 to 1.0)
@@ -2982,95 +2982,101 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        Container(
-          // Adjust height dynamically based on potential wrapping
-          // Let Wrap handle the height, or set a flexible height if needed.
-          // height: 200, 
-          padding: const EdgeInsets.all(8.0),
-          child: data.isEmpty
-              ? const Center(child: Text('No data available'))
-              : Wrap(
-                  spacing: 4.0, // Horizontal space between bars
-                  runSpacing: 8.0, // Vertical space between rows of bars
-                  alignment: WrapAlignment.center, // Center the bars horizontally
-                  children: data.map((item) {
-                    // Check if this is a special message (no data, insufficient data)
-                    bool isSpecialMessage = item.category.contains('No ') || 
-                                           item.category.contains('Insufficient');
-                    
-                    // Special handling for message items
-                    if (isSpecialMessage) {
-                      // Make message containers flexible too
-                      return Container(
-                        constraints: const BoxConstraints(minHeight: 180), // Ensure minimum height
-                        padding: const EdgeInsets.all(8),
-                        alignment: Alignment.center,
-                        child: Text(
-                          item.category,
-                          style: TextStyle(
-                            color: color.withOpacity(0.8),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      );
-                    }
-                    
-                    // Normal bar chart item
-                    final normalizedHeight = maxValue > 0 ? item.value / maxValue : 0;
-                    final barHeight = max(20.0, 160 * normalizedHeight.toDouble());
-                    
-                    // Use a fixed-size container for each bar element
-                    return SizedBox(
-                      width: 50, // Keep bar width
-                      height: 250, // Set a fixed height for the column including text
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        mainAxisAlignment: MainAxisAlignment.end, // Align bottom of bar to bottom
-                        children: [
-                          Container(
-                            width: 50,
-                            height: barHeight,
-                            decoration: BoxDecoration(
-                              color: color.withOpacity(0.7),
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(4),
-                              ),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              '${item.value.toInt()} min',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Container(
-                            width: 50,
-                            height: 75,
-                            alignment: const Alignment(0.0,1.0),
-                            child: Center(
-                              child: RotatedBox(
-                                quarterTurns: 3,
-                                child: Text(
-                                  item.category,
-                                  style: const TextStyle(fontSize: 10),
-                                  textAlign: TextAlign.right,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return Center(
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: min(constraints.maxWidth, 800),
                 ),
+                padding: const EdgeInsets.all(8.0),
+                child: data.isEmpty
+                    ? const Center(child: Text('No data available'))
+                    : Wrap(
+                        spacing: 4.0, // Horizontal space between bars
+                        runSpacing: 8.0, // Vertical space between rows of bars
+                        alignment: WrapAlignment.center, // Center the bars horizontally
+                        children: data.map((item) {
+                          // Check if this is a special message (no data, insufficient data)
+                          bool isSpecialMessage = item.category.contains('No ') || 
+                                                item.category.contains('Insufficient');
+                          
+                          // Special handling for message items
+                          if (isSpecialMessage) {
+                            // Make message containers flexible too
+                            return Container(
+                              constraints: const BoxConstraints(minHeight: 180), // Ensure minimum height
+                              padding: const EdgeInsets.all(8),
+                              alignment: Alignment.center,
+                              child: Text(
+                                item.category,
+                                style: TextStyle(
+                                  color: color.withOpacity(0.8),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            );
+                          }
+                          
+                          // Normal bar chart item
+                          final normalizedHeight = maxValue > 0 ? item.value / maxValue : 0;
+                          final barHeight = max(20.0, 160 * normalizedHeight.toDouble());
+                          
+                          // Use a fixed-size container for each bar element
+                          return SizedBox(
+                            width: 50, // Keep bar width
+                            height: 250, // Set a fixed height for the column including text
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              mainAxisAlignment: MainAxisAlignment.end, // Align bottom of bar to bottom
+                              children: [
+                                Container(
+                                  width: 50,
+                                  height: barHeight,
+                                  decoration: BoxDecoration(
+                                    color: color.withOpacity(0.7),
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(4),
+                                    ),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    '${item.value.toInt()} min',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(
+                                  width: 50,
+                                  height: 75,
+                                  alignment: const Alignment(0.0,1.0),
+                                  child: Center(
+                                    child: RotatedBox(
+                                      quarterTurns: 3,
+                                      child: Text(
+                                        item.category,
+                                        style: const TextStyle(fontSize: 10),
+                                        textAlign: TextAlign.right,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+              )
+            );
+          }
         ),
       ],
     );
