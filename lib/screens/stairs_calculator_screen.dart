@@ -62,6 +62,8 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
     setState(() {
       bool newIsMetric = index == 0;
       if (newIsMetric != _isMetric) {
+        // Update isMetric state
+        _isMetric = newIsMetric;
         // Convert state values when switching units
         if (newIsMetric) {
           // Imperial to Metric
@@ -76,7 +78,6 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
         _stairHeight = _stairHeight.clamp(_getSliderMin(true), _getSliderMax(true));
         _stairLength = _stairLength.clamp(_getSliderMin(false), _getSliderMax(false));
 
-        _isMetric = newIsMetric;
       }
     });
   }
@@ -178,24 +179,33 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
       appBar: AppBar(title: const Text('Stairs Calculator')),
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Unit Selection
               Center(
-                child: ToggleButtons(
-                  isSelected: [_isMetric, !_isMetric],
-                  onPressed: _toggleUnits,
-                  borderRadius: BorderRadius.circular(8.0),
-                  constraints: const BoxConstraints(minHeight: 40.0, minWidth: 80.0),
-                  children: const [
-                    Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('Metric (cm)')),
-                    Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('Imperial (in)')),
+                child: Wrap(
+                  spacing: 8.0,
+                  children: [
+                    FilterChip(
+                      label: const Text('Metric (cm)'),
+                      selected: _isMetric,
+                      onSelected: (bool selected) {
+                        if (selected) _toggleUnits(0);
+                      },
+                    ),
+                    FilterChip(
+                      label: const Text('Imperial (in)'),
+                      selected: !_isMetric,
+                      onSelected: (bool selected) {
+                        if (selected) _toggleUnits(1);
+                      },
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
 
               // Stair Height
               Text(
@@ -213,7 +223,7 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
                   });
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               // Stair Length
               Text(
@@ -231,7 +241,7 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
                   });
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               // Cadence
               Text(
@@ -250,7 +260,7 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
                   });
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
               // Total Steps
               TextField(
@@ -265,7 +275,7 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
                   FilteringTextInputFormatter.digitsOnly // Allow only digits
                 ],
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 12),
 
               // Results Section
               Card(
@@ -318,7 +328,7 @@ class _StairsCalculatorScreenState extends State<StairsCalculatorScreen> {
     required BuildContext context,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
       child: Row(
         children: [
           Icon(icon, color: Theme.of(context).colorScheme.primary, size: 20),

@@ -125,6 +125,11 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
 
   void updateFromRealPace(double newRealPaceSeconds) {
     setState(() {
+      if (newRealPaceSeconds < 120.0) {
+        newRealPaceSeconds = 120.0;
+      } else if (newRealPaceSeconds > 720.0) {
+        newRealPaceSeconds = 720.0;
+      }
       double adjustment = calculateGradeAdjustment(gradient);
       double newGradeAdjustedPaceSeconds = newRealPaceSeconds / adjustment;
       
@@ -147,6 +152,11 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
 
   void updateFromGradeAdjustedPace(double newGradeAdjustedPaceSeconds) {
     setState(() {
+      if (newGradeAdjustedPaceSeconds < 120.0) {
+        newGradeAdjustedPaceSeconds = 120.0;
+      } else if (newGradeAdjustedPaceSeconds > 720.0) {
+        newGradeAdjustedPaceSeconds = 720.0;
+      }
       double adjustment = calculateGradeAdjustment(gradient);
       double newRealPaceSeconds = newGradeAdjustedPaceSeconds * adjustment;
       
@@ -169,6 +179,11 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
 
   void updateGradient(double newGradient) {
     setState(() {
+      if (newGradient < -35.0) {
+        newGradient = -35.0;
+      } else if (newGradient > 35.0) {
+        newGradient = 35.0;
+      }
       gradient = newGradient;
       double adjustment = calculateGradeAdjustment(newGradient);
       double newRealPaceSeconds = gradeAdjustedPaceSeconds * adjustment;
@@ -211,36 +226,38 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
       appBar: AppBar(title: const Text('Pace Calculator')),
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Unit selection buttons
-              Wrap(
-                spacing: 8.0,
-                children: [
-                  for (var unit in PaceUnit.values)
-                    FilterChip(
-                      label: Text(
-                        switch (unit) {
-                          PaceUnit.minPerKm => 'min/km',
-                          PaceUnit.minPerMile => 'min/mi',
-                          PaceUnit.kph => 'km/h',
-                          PaceUnit.mph => 'mph',
-                        },
-                      ),
-                      selected: selectedUnit == unit,
-                      onSelected: (bool selected) {
-                        if (selected) {
-                          setState(() {
-                            selectedUnit = unit;
+              Center(
+                child: Wrap(
+                  spacing: 8.0,
+                  children: [
+                    for (var unit in PaceUnit.values)
+                      FilterChip(
+                        label: Text(
+                          switch (unit) {
+                            PaceUnit.minPerKm => 'min/km',
+                            PaceUnit.minPerMile => 'min/mi',
+                            PaceUnit.kph => 'km/h',
+                            PaceUnit.mph => 'mph',
+                          },
+                        ),
+                        selected: selectedUnit == unit,
+                        onSelected: (bool selected) {
+                          if (selected) {
+                            setState(() {
+                              selectedUnit = unit;
                           });
                         }
                       },
                     ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
               
               Text(
                 'Gradient: ${gradient.toStringAsFixed(1)}%',
@@ -315,7 +332,7 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 12),
               
               Text(
                 'Grade Adjusted Pace: ${formatPace(gradeAdjustedPaceSeconds)}${getUnitSuffix()}',
@@ -469,7 +486,7 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 12),
               
               Text(
                 'Real Pace: ${formatPace(realPaceSeconds)}${getUnitSuffix()}',
@@ -623,7 +640,7 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 12),
               
               // Results Display (using Card and _buildResultRow for consistency)
               Card(
@@ -655,7 +672,7 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
     required BuildContext context,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
       child: Row(
         children: [
           Icon(icon, color: Theme.of(context).colorScheme.primary, size: 20),
