@@ -116,11 +116,12 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
   double calculateGradeAdjustment(double gradientPercent) {
     // Clamp gradient to ±35%
     double g = gradientPercent.clamp(-35.0, 35.0);
-    return (-0.000000447713 * pow(g, 4)) +
-           (-0.000003068688 * pow(g, 3)) +
-           (0.001882643005 * pow(g, 2)) +
-           (0.030457306268 * g) +
-           1;
+    return (-0.000000007286230719 * pow(g, 5)) +
+           (-0.000000454018556974728 * pow(g, 4)) +
+           (0.0000057057543350136 * pow(g, 3)) +
+           (0.0018919719531783 * pow(g, 2)) +
+           (0.028871692121588 * g) +
+           0.993288128483354;
   }
 
   void updateFromRealPace(double newRealPaceSeconds) {
