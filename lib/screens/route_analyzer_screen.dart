@@ -120,8 +120,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   double calculateGradeAdjustment(double gradientPercent) {
-    // Clamp gradient to ±35%
-    double g = gradientPercent.clamp(-35.0, 35.0);
+    // Clamp gradient to ±45%
+    double g = gradientPercent.clamp(-45.0, 45.0);
     return (-0.0000000005968925381 * pow(g, 5)) +
            (-0.000000366663628576468 * pow(g, 4)) +
            (-0.0000016677964832213 * pow(g, 3)) +
@@ -708,7 +708,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       final gradient = (dy / dx) * 100;
       
       // Clamp extreme values that might be due to GPS errors
-      final clampedGradient = gradient.clamp(-35.0, 35.0);
+      final clampedGradient = gradient.clamp(-45.0, 45.0);
       grads.add(clampedGradient);
     }
     
