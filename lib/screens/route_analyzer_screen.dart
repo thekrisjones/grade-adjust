@@ -23,6 +23,9 @@ class CheckpointData {
   String? name;
   // Base grade adjusted pace for the segment ending at this checkpoint
   double baseGradeAdjustedPace = 0;
+  // Add grade adjusted distance
+  double gradeAdjustedDistance = 0;
+  double cumulativeGradeAdjustedDistance = 0;
 
   CheckpointData({required this.distance});
   
@@ -37,6 +40,8 @@ class CheckpointData {
     cp.id = id;
     cp.name = name;
     cp.baseGradeAdjustedPace = baseGradeAdjustedPace;
+    cp.gradeAdjustedDistance = gradeAdjustedDistance;
+    cp.cumulativeGradeAdjustedDistance = cumulativeGradeAdjustedDistance;
     return cp;
   }
 }
@@ -531,6 +536,36 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       
       // Process waypoints from GPX file
       processWaypoints();
+
+      // Add a default finish checkpoint
+      if (elevationPoints.isNotEmpty) {
+        final finishCheckpoint = CheckpointData(distance: elevationPoints.last.x);
+        finishCheckpoint.id = 'finish';
+        finishCheckpoint.name = 'Finish';
+        
+        // Add the checkpoint
+        checkpoints.add(finishCheckpoint);
+        
+        // Add new focus nodes for this checkpoint - with web platform handling
+        final nameNode = FocusNode();
+        final distanceNode = FocusNode();
+        
+        // Add focus listeners only if not on web
+        if (!_isWeb) {
+          try {
+            nameNode.addListener(_onFocusChange);
+            distanceNode.addListener(_onFocusChange);
+          } catch (e) {
+            // Silently handle any focus node errors
+          }
+        }
+        
+        _nameFocusNodes.add(nameNode);
+        _distanceFocusNodes.add(distanceNode);
+        
+        // Recalculate metrics for all checkpoints to ensure consistency
+        _calculateCheckpointMetrics(startIndex: 0);
+      }
 
       // Fit map bounds to show the entire route
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -1493,7 +1528,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             alignment: WrapAlignment.center,
                             children: [
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Total Distance',
                                   '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
@@ -1502,7 +1537,16 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Grade Adj. Distance',
+                                  '${checkpoints.isNotEmpty ? checkpoints.last.cumulativeGradeAdjustedDistance.toStringAsFixed(1) : "0"} km',
+                                  Icons.terrain,
+                                  Colors.purple,
+                                ),
+                              ),
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Gain',
                                   '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
@@ -1511,7 +1555,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Loss',
                                   '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
@@ -1520,7 +1564,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 24) / 4 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Estimated Time',
                                   timePoints.isNotEmpty ? _formatTotalTime(timePoints.last.y) : '0m',
@@ -1678,6 +1722,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
+                                    Container( // Grade Adj. Distance column
+                                      width: 110,
+                                      child: Text(
+                                        'Grade Adj. (km)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
                                     Container( // Elevation column
                                       width: 110,
                                       child: Text(
@@ -1806,7 +1859,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           
                                           // Distance (editable)
                                           Container(
-                                            width: 110,
+                                      width: 110,
                                             child: TextFormField(
                                               key: ValueKey('checkpoint_${checkpoint.id}'),
                                               focusNode: _distanceFocusNodes[index],
@@ -1847,6 +1900,17 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 });
                                                 _processCheckpointChanges();
                                               },
+                                            ),
+                                          ),
+                                          
+                                          // Grade Adj. Distance (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                checkpoint.cumulativeGradeAdjustedDistance.toStringAsFixed(1),
+                                              ),
                                             ),
                                           ),
                                           
@@ -2271,6 +2335,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       if (checkpoint.baseGradeAdjustedPace <= 0) {
         checkpoint.baseGradeAdjustedPace = getSegmentBaseGradeAdjustedPace(startDistance, checkpoint.distance);
       }
+      
+      // Calculate grade adjusted distance for this segment
+      checkpoint.gradeAdjustedDistance = calculateGradeAdjustedDistance(startDistance, checkpoint.distance);
     }
     
     // Re-sort checkpoints by distance to ensure correct order
@@ -2291,6 +2358,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       if (elevationIndex >= 0 && elevationIndex < cumulativeElevationGain.length) {
         checkpoint.elevationGain = cumulativeElevationGain[elevationIndex];
         checkpoint.elevationLoss = cumulativeElevationLoss[elevationIndex];
+      }
+      
+      // Calculate cumulative grade adjusted distance
+      if (i == 0) {
+        checkpoint.cumulativeGradeAdjustedDistance = checkpoint.gradeAdjustedDistance;
+      } else {
+        checkpoint.cumulativeGradeAdjustedDistance = checkpoints[i-1].cumulativeGradeAdjustedDistance + checkpoint.gradeAdjustedDistance;
       }
       
       // Find the closest time point to this distance
@@ -2399,6 +2473,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       final headers = [
         'Name', 
         'Distance (km)', 
+        'Grade Adj. (km)',
         'Elevation (m)', 
         'Elevation Gain (m)',
         'Elevation Loss (m)',
@@ -2428,28 +2503,32 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: i+1)).value = 
             xl.DoubleCellValue(checkpoint.distance);
         
-        // Elevation
+        // Grade Adjusted Distance
         sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i+1)).value = 
+            xl.DoubleCellValue(checkpoint.cumulativeGradeAdjustedDistance);
+        
+        // Elevation
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i+1)).value = 
             xl.DoubleCellValue(checkpoint.elevation);
         
         // Elevation Gain
-        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i+1)).value = 
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i+1)).value = 
             xl.DoubleCellValue(checkpoint.elevationGain);
         
         // Elevation Loss
-        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i+1)).value = 
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: i+1)).value = 
             xl.DoubleCellValue(checkpoint.elevationLoss);
         
         // Total Time (formatted)
-        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: i+1)).value = 
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i+1)).value = 
             xl.TextCellValue(_formatTotalTime(checkpoint.cumulativeTime));
         
         // Segment Time (formatted)
-        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i+1)).value = 
+        sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: i+1)).value = 
             xl.TextCellValue(_formatTotalTime(checkpoint.timeFromPrevious));
         
         // Column index tracker
-        int colIndex = 7;
+        int colIndex = 8;
         
         // Real Time (if start time is set)
         if (startTime != null) {
@@ -2868,7 +2947,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     // Create a new checkpoint
     final checkpoint = CheckpointData(distance: distance);
     checkpoint.id = DateTime.now().millisecondsSinceEpoch.toString();
-    checkpoint.name = 'CP ${(checkpoints.length + 1)}';
+    checkpoint.name = 'CP ${(checkpoints.length)}';
     
     // If table not visible, make it visible
     setState(() {
@@ -2938,7 +3017,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     return Card(
       elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(8.0),
         child: Column(
           children: [
             Icon(icon, color: color, size: 24),
@@ -2947,9 +3026,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
               title,
               style: const TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
             const SizedBox(height: 4),
             Text(
               value,
@@ -3132,5 +3211,39 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
      }
 
     return smoothedPoints;
+  }
+
+  // Calculate the grade adjusted distance for a segment
+  double calculateGradeAdjustedDistance(double startDistance, double endDistance) {
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty) return endDistance - startDistance;
+    
+    double totalAdjustedDistance = 0;
+    
+    // Find elevation points within this segment
+    for (int i = 1; i < elevationPoints.length; i++) {
+      double distance = elevationPoints[i].x;
+      if (distance >= startDistance && distance <= endDistance) {
+        double segmentDistance = elevationPoints[i].x - elevationPoints[i-1].x;
+        if (segmentDistance <= 0) continue;
+        
+        // Get gradient for this segment
+        int gradientIndex = min(i, smoothedGradients.length - 1);
+        double gradientPercent = gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
+        
+        // Calculate grade adjustment factor (same as pace adjustment)
+        double adjustment = calculateGradeAdjustment(gradientPercent);
+        
+        // Apply adjustment to segment distance
+        totalAdjustedDistance += segmentDistance * adjustment;
+      }
+    }
+    
+    return totalAdjustedDistance;
+  }
+
+  // Calculate total grade adjusted distance for the route
+  double calculateTotalGradeAdjustedDistance() {
+    if (elevationPoints.isEmpty) return 0;
+    return calculateGradeAdjustedDistance(0, elevationPoints.last.x);
   }
 } 
