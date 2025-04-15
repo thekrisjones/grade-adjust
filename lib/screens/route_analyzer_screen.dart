@@ -1713,10 +1713,28 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Distance column
+                                    Container( // Total Distance column
                                       width: 110,
                                       child: Text(
-                                        'Distance (km)',
+                                        'Total Distance (km)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    Container( // Segment Distance column
+                                      width: 110,
+                                      child: Text(
+                                        'Segment Distance (km)',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    Container( // Segment Pace column
+                                      width: 110,
+                                      child: Text(
+                                        'Segment Pace',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1857,9 +1875,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                             ),
                                           ),
                                           
-                                          // Distance (editable)
+                                          // Total Distance (editable)
                                           Container(
-                                      width: 110,
+                                            width: 110,
                                             child: TextFormField(
                                               key: ValueKey('checkpoint_${checkpoint.id}'),
                                               focusNode: _distanceFocusNodes[index],
@@ -1900,6 +1918,28 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 });
                                                 _processCheckpointChanges();
                                               },
+                                            ),
+                                          ),
+                                          
+                                          // Segment Distance (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                _getSegmentDistance(index).toStringAsFixed(1),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Segment Pace (read-only)
+                                          Container(
+                                            width: 110,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                _getSegmentPace(index),
+                                              ),
                                             ),
                                           ),
                                           
@@ -3245,5 +3285,37 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   double calculateTotalGradeAdjustedDistance() {
     if (elevationPoints.isEmpty) return 0;
     return calculateGradeAdjustedDistance(0, elevationPoints.last.x);
+  }
+
+  // Helper method to get segment distance for a checkpoint
+  double _getSegmentDistance(int checkpointIndex) {
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) return 0;
+    
+    if (checkpointIndex == 0) {
+      // For first checkpoint, segment distance is same as total distance
+      return checkpoints[0].distance;
+    } else {
+      // For other checkpoints, segment distance is difference from previous checkpoint
+      return checkpoints[checkpointIndex].distance - checkpoints[checkpointIndex - 1].distance;
+    }
+  }
+
+  // Helper method to get segment pace for a checkpoint
+  String _getSegmentPace(int checkpointIndex) {
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) return 'N/A';
+    
+    double segmentDistance = _getSegmentDistance(checkpointIndex);
+    if (segmentDistance <= 0) return 'N/A';
+    
+    double segmentTime = checkpoints[checkpointIndex].timeFromPrevious;
+    if (segmentTime <= 0) return 'N/A';
+    
+    // Calculate pace in seconds per km
+    double paceSeconds = (segmentTime * 60) / segmentDistance;
+    
+    // Format pace as MM:SS
+    int minutes = (paceSeconds / 60).floor();
+    int seconds = (paceSeconds % 60).round();
+    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
   }
 } 
