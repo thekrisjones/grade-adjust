@@ -1299,10 +1299,22 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         },
                         child: LineChart(
                           LineChartData(
-                            gridData: const FlGridData(show: true),
+                            gridData: FlGridData(
+                              show: true,
+                              drawVerticalLine: false,  // Already set correctly to hide vertical lines
+                              horizontalInterval: 200,  // Match the elevation intervals (200m)
+                              getDrawingHorizontalLine: (value) => FlLine(
+                                color: Colors.grey.shade300,
+                                strokeWidth: 1,
+                                dashArray: null,  // Setting to null makes the line solid (not dashed)
+                              ),
+                            ),
                             borderData: FlBorderData(
                               show: true,
-                              border: Border.all(color: Colors.grey.shade300, width: 1),
+                              border: Border.all(
+                                color: Colors.grey.shade300,  // Match the gridline color
+                                width: 1,
+                              ),
                             ),
                             titlesData: FlTitlesData(
                               bottomTitles: AxisTitles(
@@ -2759,16 +2771,25 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     
     // Define custom elevation bins (0-500, 500-1000, 1000-1500, 1500-2000, 2000-2500, 2500-3000, >3000)
     List<String> elevationLabels = [
-      '    0 to 500m', 
-      ' 500 to 1000m', 
-      '1000 to 1500m', 
-      '1500 to 2000m', 
-      '2000 to 2500m', 
-      '2500 to 3000m', 
+      '    0 to 200m', 
+      '  200 to 400m', 
+      '  400 to 600m', 
+      '  600 to 800m', 
+      '  800 to 1000m', 
+      '1000 to 1200m', 
+      '1200 to 1400m', 
+      '1400 to 1600m', 
+      '1600 to 1800m', 
+      '1800 to 2000m', 
+      '2000 to 2200m', 
+      '2200 to 2400m', 
+      '2400 to 2600m', 
+      '2600 to 2800m', 
+      '2800 to 3000m', 
       '       >3000m'
     ];
     
-    List<double> elevationBreakpoints = [0, 500, 1000, 1500, 2000, 2500, 3000, double.infinity];
+    List<double> elevationBreakpoints = [0, 200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, double.infinity];
     
     // Define custom gradient bins
     List<String> gradientLabels = [
@@ -3086,12 +3107,43 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   
   // Helper method to build bar charts
   Widget _buildBarChart(String title, List<ChartData> data, Color color) {
+    if (data.isEmpty) return const SizedBox.shrink();
+
     // Find the maximum value to normalize bars
     double maxValue = 0;
     for (var item in data) {
       maxValue = max(maxValue, item.value);
     }
-    
+
+    // Check if this is a special message (no data, insufficient data)
+    if (data.length == 1 && (data[0].category.contains('No ') || data[0].category.contains('Insufficient'))) {
+      return Column(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            height: 180,
+            alignment: Alignment.center,
+            child: Text(
+              data[0].category,
+              style: TextStyle(
+                color: color.withOpacity(0.8),
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       children: [
         Text(
@@ -3102,101 +3154,106 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return Center(
-              child: Container(
-                constraints: BoxConstraints(
-                  maxWidth: min(constraints.maxWidth, 800),
-                ),
-                padding: const EdgeInsets.all(8.0),
-                child: data.isEmpty
-                    ? const Center(child: Text('No data available'))
-                    : Wrap(
-                        spacing: 4.0, // Horizontal space between bars
-                        runSpacing: 8.0, // Vertical space between rows of bars
-                        alignment: WrapAlignment.center, // Center the bars horizontally
-                        children: data.map((item) {
-                          // Check if this is a special message (no data, insufficient data)
-                          bool isSpecialMessage = item.category.contains('No ') || 
-                                                item.category.contains('Insufficient');
-                          
-                          // Special handling for message items
-                          if (isSpecialMessage) {
-                            // Make message containers flexible too
-                            return Container(
-                              constraints: const BoxConstraints(minHeight: 180), // Ensure minimum height
-                              padding: const EdgeInsets.all(8),
-                              alignment: Alignment.center,
-                              child: Text(
-                                item.category,
-                                style: TextStyle(
-                                  color: color.withOpacity(0.8),
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            );
-                          }
-                          
-                          // Normal bar chart item
-                          final normalizedHeight = maxValue > 0 ? item.value / maxValue : 0;
-                          final barHeight = max(20.0, 160 * normalizedHeight.toDouble());
-                          
-                          // Use a fixed-size container for each bar element
-                          return SizedBox(
-                            width: 50, // Keep bar width
-                            height: 250, // Set a fixed height for the column including text
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              mainAxisAlignment: MainAxisAlignment.end, // Align bottom of bar to bottom
-                              children: [
-                                Container(
-                                  width: 50,
-                                  height: barHeight,
-                                  decoration: BoxDecoration(
-                                    color: color.withOpacity(0.7),
-                                    borderRadius: const BorderRadius.vertical(
-                                      top: Radius.circular(4),
-                                    ),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    '${item.value.toInt()} min',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Container(
-                                  width: 50,
-                                  height: 75,
-                                  alignment: const Alignment(0.0,1.0),
-                                  child: Center(
-                                    child: RotatedBox(
-                                      quarterTurns: 3,
-                                      child: Text(
-                                        item.category,
-                                        style: const TextStyle(fontSize: 10),
-                                        textAlign: TextAlign.right,
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+        SizedBox(
+          height: 250,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Calculate responsive bar width based on available width
+              // Leave some padding between bars (20% of total space)
+              final barWidth = (constraints.maxWidth / data.length) * 0.8;
+              // Clamp the width between reasonable min and max values
+              final clampedWidth = barWidth.clamp(20.0, 60.0);
+
+              return BarChart(
+                BarChartData(
+                  alignment: BarChartAlignment.spaceAround,
+                  maxY: maxValue,
+                  barTouchData: BarTouchData(
+                    enabled: true,
+                    touchTooltipData: BarTouchTooltipData(
+                      tooltipBgColor: Colors.grey.shade800,
+                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        return BarTooltipItem(
+                          '${rod.toY.toInt()} min',
+                          const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    show: true,
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 75,
+                        getTitlesWidget: (value, meta) {
+                          if (value < 0 || value >= data.length) return const Text('');
+                          return RotatedBox(
+                            quarterTurns: 3,
+                            child: Text(
+                              data[value.toInt()].category,
+                              style: const TextStyle(fontSize: 10),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           );
-                        }).toList(),
+                        },
                       ),
-              )
-            );
-          }
+                    ),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 40,
+                        getTitlesWidget: (value, meta) {
+                          if (value == 0) return const Text('');
+                          return Text(
+                            value.toInt().toString(),
+                            style: const TextStyle(fontSize: 10),
+                          );
+                        },
+                      ),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                  ),
+                  borderData: FlBorderData(
+                    show: true,
+                    border: Border.all(color: Colors.grey.shade300, width: 1),
+                  ),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: maxValue / 5,
+                    getDrawingHorizontalLine: (value) => FlLine(
+                      color: Colors.grey.shade300,
+                      strokeWidth: 1,
+                    ),
+                  ),
+                  barGroups: List.generate(
+                    data.length,
+                    (index) => BarChartGroupData(
+                      x: index,
+                      barRods: [
+                        BarChartRodData(
+                          toY: data[index].value,
+                          color: color.withOpacity(0.7),
+                          width: clampedWidth,  // Use the calculated responsive width
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ],
     );
