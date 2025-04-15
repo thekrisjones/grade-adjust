@@ -1148,8 +1148,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   Marker(
                                                     point: routePoints[hoveredPointIndex!],
                                                     child: Container(
-                                                      width: 3, // Reduced from 5 to 3 (40% smaller)
-                                                      height: 3, // Reduced from 5 to 3 (40% smaller)
+                                                      width: 3, 
+                                                      height: 3, 
                                                       decoration: BoxDecoration(
                                                         color: Colors.blue,
                                                         shape: BoxShape.circle,
@@ -1182,8 +1182,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                     return Marker(
                                                       point: routePoints[routePointIndex],
                                                       child: Container(
-                                                        width: 12,
-                                                        height: 12,
+                                                        width: 3,
+                                                        height: 3,
                                                         decoration: BoxDecoration(
                                                           color: Colors.red.withOpacity(0.7),
                                                           shape: BoxShape.circle,
@@ -1540,7 +1540,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             alignment: WrapAlignment.center,
                             children: [
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Total Distance',
                                   '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
@@ -1549,7 +1549,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Grade Adj. Distance',
                                   '${checkpoints.isNotEmpty ? checkpoints.last.cumulativeGradeAdjustedDistance.toStringAsFixed(1) : "0"} km',
@@ -1558,7 +1558,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Gain',
                                   '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
@@ -1567,7 +1567,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Loss',
                                   '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
@@ -1576,12 +1576,21 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 ),
                               ),
                               SizedBox(
-                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 32) / 5 : (constraints.maxWidth - 8) / 2,
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Estimated Time',
                                   timePoints.isNotEmpty ? _formatTotalTime(timePoints.last.y) : '0m',
                                   Icons.timer,
                                   Colors.orange,
+                                ),
+                              ),
+                              SizedBox(
+                                width: constraints.maxWidth > 800 ? (constraints.maxWidth - 40) / 6 : (constraints.maxWidth - 8) / 2,
+                                child: _buildStatCard(
+                                  'Average Pace',
+                                  timePoints.isNotEmpty ? '${formatPaceAxisLabel((timePoints.last.y * 60) / elevationPoints.last.x)} min/km' : '0 min/km',
+                                  Icons.speed,
+                                  Colors.cyan,
                                 ),
                               ),
                             ],
@@ -1716,7 +1725,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                                 child: Row(
                                   children: [
-                                    Container( // Name column
+                                    SizedBox( // Name column
                                       width: 150,
                                       child: Text(
                                         'Name',
@@ -1725,7 +1734,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Total Distance column
+                                    SizedBox( // Total Distance column
                                       width: 110,
                                       child: Text(
                                         'Total Distance (km)',
@@ -1734,7 +1743,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Segment Distance column
+                                    SizedBox( // Segment Distance column
                                       width: 110,
                                       child: Text(
                                         'Segment Distance (km)',
@@ -1743,7 +1752,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Segment Pace column
+                                    SizedBox( // Segment Pace column
                                       width: 110,
                                       child: Text(
                                         'Segment Pace',
@@ -1752,7 +1761,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Grade Adj. Distance column
+                                    SizedBox( // Grade Adj. Distance column
                                       width: 110,
                                       child: Text(
                                         'Grade Adj. (km)',
@@ -1761,7 +1770,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Elevation column
+                                    SizedBox( // Elevation column
                                       width: 110,
                                       child: Text(
                                         'Elevation (m)',
@@ -1770,7 +1779,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Elev. Gain column
+                                    SizedBox( // Elev. Gain column
                                       width: 110,
                                       child: Text(
                                         'Elev. Gain (m)',
@@ -1779,7 +1788,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Elev. Loss column
+                                    SizedBox( // Elev. Loss column
                                       width: 110,
                                       child: Text(
                                         'Elev. Loss (m)',
@@ -1788,7 +1797,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Total Time column
+                                    SizedBox( // Total Time column
                                       width: 100,
                                       child: Text(
                                         'Total Time',
@@ -1797,7 +1806,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    Container( // Segment Time column
+                                    SizedBox( // Segment Time column
                                       width: 110,
                                       child: Text(
                                         'Segment Time',
@@ -1808,7 +1817,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     ),
                                     // Add Real Time column if start time is set
                                     if (startTime != null) 
-                                      Container( // Real Time column
+                                      SizedBox( // Real Time column
                                         width: 100,
                                         child: Text(
                                           'Real Time',
@@ -1847,7 +1856,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       child: Row(
                                         children: [
                                           // Name field (editable)
-                                          Container(
+                                          SizedBox(
                                             width: 150,
                                             child: TextFormField(
                                               key: ValueKey('checkpoint_name_${checkpoint.id}'),
@@ -1888,7 +1897,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Total Distance (editable)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: TextFormField(
                                               key: ValueKey('checkpoint_${checkpoint.id}'),
@@ -1934,7 +1943,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Segment Distance (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1945,7 +1954,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Segment Pace (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1956,7 +1965,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Grade Adj. Distance (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1967,7 +1976,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Elevation (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1978,7 +1987,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Elevation Gain (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1989,7 +1998,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Elevation Loss (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2000,7 +2009,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Cumulative Time (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 100,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2011,7 +2020,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                           
                                           // Time from Previous (read-only)
-                                          Container(
+                                          SizedBox(
                                             width: 110,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2023,7 +2032,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           
                                           // Add Real Time column if start time is set
                                           if (startTime != null)
-                                            Container( // Real Time column
+                                            SizedBox( // Real Time column
                                               width: 100,
                                               child: Padding(
                                                 padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2035,7 +2044,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                             ),
                                           
                                           // Control buttons - adjust pace and delete
-                                          Container( // Actions column
+                                          SizedBox( // Actions column
                                             width: 60,
                                             child: Row(
                                               mainAxisSize: MainAxisSize.min,
@@ -2983,8 +2992,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       Marker(
         point: routePoints[routePointIndex],
         child: Container(
-          width: 16,
-          height: 16,
+          width: 5,
+          height: 5,
           decoration: BoxDecoration(
             color: Colors.amber.withOpacity(0.7),
             shape: BoxShape.circle,
@@ -3373,6 +3382,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     // Format pace as MM:SS
     int minutes = (paceSeconds / 60).floor();
     int seconds = (paceSeconds % 60).round();
-    return '${minutes}:${seconds.toString().padLeft(2, '0')}';
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 } 
