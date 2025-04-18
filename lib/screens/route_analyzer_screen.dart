@@ -31,6 +31,9 @@ class CheckpointData {
   // Carbs calculation fields
   int legUnits = 0;
   int cumulativeUnits = 0;
+  // Fluid calculation fields
+  int legFluidUnits = 0;
+  int cumulativeFluidUnits = 0;
 
   CheckpointData({required this.distance});
   
@@ -50,6 +53,8 @@ class CheckpointData {
     cp.adjustmentFactor = adjustmentFactor;
     cp.legUnits = legUnits;
     cp.cumulativeUnits = cumulativeUnits;
+    cp.legFluidUnits = legFluidUnits;
+    cp.cumulativeFluidUnits = cumulativeFluidUnits;
     return cp;
   }
 }
@@ -127,8 +132,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   double _maxRawPace = 1200; // For color scaling (unclamped)
 
   // Add carbs calculation variables
-  double carbsPerHour = 60.0;
-  double gramsPerUnit = 30.0;
+  double carbsPerHour = 0.0;
+  double gramsPerUnit = 0.0;
+
+  // Add fluid calculation variables
+  double fluidPerHour = 0.0;
+  double mlPerUnit = 0.0;
 
   String formatPace(double seconds) {
     int mins = (seconds / 60).floor();
@@ -1771,7 +1780,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '0',
+                                                  hintText: '90',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1799,7 +1808,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '0',
+                                                  hintText: '45',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1827,11 +1836,17 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '0',
+                                                  hintText: '750',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
-                                                  // Handle fluid per hour input
+                                                  double? newValue = double.tryParse(value);
+                                                  if (newValue != null) {
+                                                    setState(() {
+                                                      fluidPerHour = newValue;
+                                                      calculateFluidUnits();
+                                                    });
+                                                  }
                                                 },
                                               ),
                                             ),
@@ -1849,11 +1864,17 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '0',
+                                                  hintText: '500',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
-                                                  // Handle fluid per hour input
+                                                  double? newValue = double.tryParse(value);
+                                                  if (newValue != null) {
+                                                    setState(() {
+                                                      mlPerUnit = newValue;
+                                                      calculateFluidUnits();
+                                                    });
+                                                  }
                                                 },
                                               ),
                                             ),
@@ -1988,6 +2009,16 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         width: 100,
                                         child: Text(
                                           'Carb units',
+                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    if (fluidPerHour > 0 && mlPerUnit > 0)
+                                      SizedBox( // Fluid Units column
+                                        width: 100,
+                                        child: Text(
+                                          'Fluid units',
                                           style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -2216,6 +2247,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 padding: const EdgeInsets.symmetric(horizontal: 8),
                                                 child: Text(
                                                   '${checkpoint.legUnits} (${checkpoint.cumulativeUnits})',
+                                                  textAlign: TextAlign.center,
+                                                ),
+                                              ),
+                                            ),
+                                          if (fluidPerHour > 0 && mlPerUnit > 0)
+                                            // Fluid Units (read-only)
+                                            SizedBox(
+                                              width: 100,
+                                              child: Padding(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                child: Text(
+                                                  '${checkpoint.legFluidUnits} (${checkpoint.cumulativeFluidUnits})',
                                                   textAlign: TextAlign.center,
                                                 ),
                                               ),
@@ -3610,7 +3653,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   // Function to calculate carbs units for checkpoints
   void calculateCarbsUnits() {
     if (checkpoints.isEmpty) return;
-
+    if (carbsPerHour <= 0 || gramsPerUnit <= 0) return;
     int previousCumulativeUnits = 0;
 
     for (int i = 0; i < checkpoints.length; i++) {
@@ -3636,6 +3679,39 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       
       // Update previous cumulative units
       previousCumulativeUnits = currentCumulativeUnits;
+    }
+  }
+
+  // Function to calculate fluid units for checkpoints
+  void calculateFluidUnits() {
+    if (checkpoints.isEmpty) return;
+    if (fluidPerHour <= 0 || mlPerUnit <= 0) return;
+
+    int previousCumulativeFluidUnits = 0;
+
+    for (int i = 0; i < checkpoints.length; i++) {
+      final checkpoint = checkpoints[i];
+      
+      // Convert cumulative time to hours
+      double currentTotalTimeHours = checkpoint.cumulativeTime / 60.0;
+      
+      // Calculate total ml needed up to this point
+      double cumulativeMl = currentTotalTimeHours * fluidPerHour;
+      
+      // Calculate total units needed up to this point (round up)
+      int currentCumulativeFluidUnits = (cumulativeMl / mlPerUnit).ceil();
+      
+      // Calculate units needed for this specific leg
+      int legFluidUnits = currentCumulativeFluidUnits - previousCumulativeFluidUnits;
+      
+      // Update checkpoint values
+      setState(() {
+        checkpoint.legFluidUnits = legFluidUnits;
+        checkpoint.cumulativeFluidUnits = currentCumulativeFluidUnits;
+      });
+      
+      // Update previous cumulative units
+      previousCumulativeFluidUnits = currentCumulativeFluidUnits;
     }
   }
 
