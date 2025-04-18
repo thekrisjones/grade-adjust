@@ -28,6 +28,9 @@ class CheckpointData {
   double cumulativeGradeAdjustedDistance = 0;
   // Adjustment factor in s/km
   double adjustmentFactor = 0;
+  // Carbs calculation fields
+  int legUnits = 0;
+  int cumulativeUnits = 0;
 
   CheckpointData({required this.distance});
   
@@ -45,6 +48,8 @@ class CheckpointData {
     cp.gradeAdjustedDistance = gradeAdjustedDistance;
     cp.cumulativeGradeAdjustedDistance = cumulativeGradeAdjustedDistance;
     cp.adjustmentFactor = adjustmentFactor;
+    cp.legUnits = legUnits;
+    cp.cumulativeUnits = cumulativeUnits;
     return cp;
   }
 }
@@ -120,6 +125,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   double _maxPace = 1200; // Y-axis max (clamped)
   double _minRawPace = 90; // For color scaling (unclamped)
   double _maxRawPace = 1200; // For color scaling (unclamped)
+
+  // Add carbs calculation variables
+  double carbsPerHour = 60.0;
+  double gramsPerUnit = 30.0;
 
   String formatPace(double seconds) {
     int mins = (seconds / 60).floor();
@@ -1766,7 +1775,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
-                                                  // Handle carbs per hour input
+                                                  double? newValue = double.tryParse(value);
+                                                  if (newValue != null) {
+                                                    setState(() {
+                                                      carbsPerHour = newValue;
+                                                      calculateCarbsUnits();
+                                                    });
+                                                  }
                                                 },
                                               ),
                                             ),
@@ -1788,7 +1803,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
-                                                  // Handle carbs per hour input
+                                                  double? newValue = double.tryParse(value);
+                                                  if (newValue != null) {
+                                                    setState(() {
+                                                      gramsPerUnit = newValue;
+                                                      calculateCarbsUnits();
+                                                    });
+                                                  }
                                                 },
                                               ),
                                             ),
@@ -1957,6 +1978,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       width: 100,
                                       child: Text(
                                         'Segment Time',
+                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    SizedBox( // Carbs Units column
+                                      width: 100,
+                                      child: Text(
+                                        'Carbs\nUnits',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -2173,6 +2203,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
                                               child: Text(
                                                 _formatTotalTime(checkpoint.timeFromPrevious),
+                                              ),
+                                            ),
+                                          ),
+                                          
+                                          // Carbs Units (read-only)
+                                          SizedBox(
+                                            width: 100,
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Text(
+                                                '${checkpoint.legUnits} (${checkpoint.cumulativeUnits})',
+                                                textAlign: TextAlign.center,
                                               ),
                                             ),
                                           ),
@@ -3561,5 +3603,55 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     int minutes = (paceSeconds / 60).floor();
     int seconds = (paceSeconds % 60).round();
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // Function to calculate carbs units for checkpoints
+  void calculateCarbsUnits() {
+    if (checkpoints.isEmpty) return;
+
+    int previousCumulativeUnits = 0;
+
+    for (int i = 0; i < checkpoints.length; i++) {
+      final checkpoint = checkpoints[i];
+      
+      // Convert cumulative time to hours
+      double currentTotalTimeHours = checkpoint.cumulativeTime / 60.0;
+      
+      // Calculate total grams needed up to this point
+      double cumulativeGrams = currentTotalTimeHours * carbsPerHour;
+      
+      // Calculate total units needed up to this point (round up)
+      int currentCumulativeUnits = (cumulativeGrams / gramsPerUnit).ceil();
+      
+      // Calculate units needed for this specific leg
+      int legUnits = currentCumulativeUnits - previousCumulativeUnits;
+      
+      // Update checkpoint values
+      setState(() {
+        checkpoint.legUnits = legUnits;
+        checkpoint.cumulativeUnits = currentCumulativeUnits;
+      });
+      
+      // Update previous cumulative units
+      previousCumulativeUnits = currentCumulativeUnits;
+    }
+  }
+
+  // Function to parse time string to hours
+  double _parseTimeToHours(String timeStr) {
+    int hours = 0;
+    int minutes = 0;
+    
+    if (timeStr.contains('h')) {
+      final parts = timeStr.split('h');
+      hours = int.parse(parts[0]);
+      if (parts.length > 1 && parts[1].contains('m')) {
+        minutes = int.parse(parts[1].replaceAll('m', ''));
+      }
+    } else if (timeStr.contains('m')) {
+      minutes = int.parse(timeStr.replaceAll('m', ''));
+    }
+    
+    return hours + (minutes / 60.0);
   }
 } 
