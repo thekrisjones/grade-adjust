@@ -26,6 +26,8 @@ class CheckpointData {
   // Add grade adjusted distance
   double gradeAdjustedDistance = 0;
   double cumulativeGradeAdjustedDistance = 0;
+  // Adjustment factor in s/km
+  double adjustmentFactor = 0;
 
   CheckpointData({required this.distance});
   
@@ -42,6 +44,7 @@ class CheckpointData {
     cp.baseGradeAdjustedPace = baseGradeAdjustedPace;
     cp.gradeAdjustedDistance = gradeAdjustedDistance;
     cp.cumulativeGradeAdjustedDistance = cumulativeGradeAdjustedDistance;
+    cp.adjustmentFactor = adjustmentFactor;
     return cp;
   }
 }
@@ -1661,120 +1664,188 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         children: [
                           // Start time picker
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // First row - Start time
-                                Row(
+                            child: Builder(
+                              builder: (context) {
+                                final screenWidth = MediaQuery.of(context).size.width;
+                                final bool isWideScreen = screenWidth > 800;
+                                
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text('Start Time: '),
-                                    TextButton(
-                                      onPressed: () async {
-                                        final TimeOfDay? time = await showTimePicker(
-                                          context: context,
-                                          initialTime: startTime ?? TimeOfDay.now(),
-                                          builder: (BuildContext context, Widget? child) {
-                                            return MediaQuery(
-                                              data: MediaQuery.of(context).copyWith(
-                                                alwaysUse24HourFormat: true,
+                                    if (!isWideScreen) ...[
+                                      // Start time row (only shown in narrow layout)
+                                      Wrap(
+                                        spacing: 8,
+                                        crossAxisAlignment: WrapCrossAlignment.center,
+                                        children: [
+                                          const Text('Start Time: '),
+                                          TextButton(
+                                            onPressed: () async {
+                                              final TimeOfDay? time = await showTimePicker(
+                                                context: context,
+                                                initialTime: startTime ?? TimeOfDay.now(),
+                                                builder: (BuildContext context, Widget? child) {
+                                                  return MediaQuery(
+                                                    data: MediaQuery.of(context).copyWith(
+                                                      alwaysUse24HourFormat: true,
+                                                    ),
+                                                    child: child!,
+                                                  );
+                                                },
+                                              );
+                                              if (time != null && mounted) {
+                                                setState(() {
+                                                  startTime = time;
+                                                });
+                                              }
+                                            },
+                                            child: Text(
+                                              startTime != null
+                                                  ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
+                                                  : 'Set Time',
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+                                    
+                                    // Main controls row
+                                    Wrap(
+                                      spacing: 16,
+                                      runSpacing: 8,
+                                      crossAxisAlignment: WrapCrossAlignment.center,
+                                      children: [
+                                        if (isWideScreen) ...[
+                                          // Start time (only shown in wide layout)
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const Text('Start Time: '),
+                                              TextButton(
+                                                onPressed: () async {
+                                                  final TimeOfDay? time = await showTimePicker(
+                                                    context: context,
+                                                    initialTime: startTime ?? TimeOfDay.now(),
+                                                    builder: (BuildContext context, Widget? child) {
+                                                      return MediaQuery(
+                                                        data: MediaQuery.of(context).copyWith(
+                                                          alwaysUse24HourFormat: true,
+                                                        ),
+                                                        child: child!,
+                                                      );
+                                                    },
+                                                  );
+                                                  if (time != null && mounted) {
+                                                    setState(() {
+                                                      startTime = time;
+                                                    });
+                                                  }
+                                                },
+                                                child: Text(
+                                                  startTime != null
+                                                      ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
+                                                      : 'Set Time',
+                                                ),
                                               ),
-                                              child: child!,
-                                            );
-                                          },
-                                        );
-                                        if (time != null && mounted) {
-                                          setState(() {
-                                            startTime = time;
-                                          });
-                                        }
-                                      },
-                                      child: Text(
-                                        startTime != null
-                                            ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
-                                            : 'Set Time',
-                                      ),
+                                            ],
+                                          ),
+                                        ],
+                                        
+                                        // Carbs per hour control
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text('Carbs per hour: '),
+                                            SizedBox(
+                                              width: 45,
+                                              child: TextField(
+                                                keyboardType: TextInputType.number,
+                                                decoration: const InputDecoration(
+                                                  hintText: '60',
+                                                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                ),
+                                                onChanged: (value) {
+                                                  // Handle carbs per hour input
+                                                },
+                                              ),
+                                            ),
+                                            const Text('g/hour'),
+                                          ],
+                                        ),
+                                        
+                                        // Carb unit control
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text('Carb unit: '),
+                                            SizedBox(
+                                              width: 45,
+                                              child: TextField(
+                                                keyboardType: TextInputType.number,
+                                                decoration: const InputDecoration(
+                                                  hintText: '30',
+                                                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                ),
+                                                onChanged: (value) {
+                                                  // Handle carbs per hour input
+                                                },
+                                              ),
+                                            ),
+                                            const Text('g'),
+                                          ],
+                                        ),
+                                        
+                                        // Fluid per hour control
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text('Fluid per hour: '),
+                                            SizedBox(
+                                              width: 45,
+                                              child: TextField(
+                                                keyboardType: TextInputType.number,
+                                                decoration: const InputDecoration(
+                                                  hintText: '500',
+                                                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                ),
+                                                onChanged: (value) {
+                                                  // Handle fluid per hour input
+                                                },
+                                              ),
+                                            ),
+                                            const Text('ml/h'),
+                                          ],
+                                        ),
+                                        
+                                        // Fluid unit control
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text('Fluid unit: '),
+                                            SizedBox(
+                                              width: 45,
+                                              child: TextField(
+                                                keyboardType: TextInputType.number,
+                                                decoration: const InputDecoration(
+                                                  hintText: '500',
+                                                  contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                ),
+                                                onChanged: (value) {
+                                                  // Handle fluid per hour input
+                                                },
+                                              ),
+                                            ),
+                                            const Text('ml'),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ],
-                                ),
-                                const SizedBox(height: 8),
-                                // Second row - Carbs inputs
-                                Row(
-                                  children: [
-                                    const Text('Carbs per hour: '),
-                                    SizedBox(
-                                      width: 45,
-                                      child: TextField(
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(
-                                          hintText: '60',
-                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                                        ),
-                                        onChanged: (value) {
-                                          // Handle carbs per hour input
-                                        },
-                                      ),
-                                    ),
-                                    const Text('g/hour'),
-                                    Container(width: 8),
-                                    const Text('Carb unit: '),
-                                    SizedBox(
-                                      width: 45,
-                                      child: TextField(
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(
-                                          hintText: '30',
-                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                                        ),
-                                        onChanged: (value) {
-                                          // Handle carbs per hour input
-                                        },
-                                      ),
-                                    ),
-                                    const Text('g'),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                // Third row - Fluid inputs
-                                Row(
-                                  children: [
-                                    const Text('Fluid per hour: '),
-                                    SizedBox(
-                                      width: 45,
-                                      child: TextField(
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(
-                                          hintText: '500',
-                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                                        ),
-                                        onChanged: (value) {
-                                          // Handle fluid per hour input
-                                        },
-                                      ),
-                                    ),
-                                    const Text('ml/h'),
-                                    Container(width: 8),
-                                    const Text('Fluid unit: '),
-                                    SizedBox(
-                                      width: 45,
-                                      child: TextField(
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(
-                                          hintText: '500',
-                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                                        ),
-                                        onChanged: (value) {
-                                          // Handle fluid per hour input
-                                        },
-                                      ),
-                                    ),
-                                    const Text('ml'),
-                                  ],
-                                ),
-                              ],
+                                );
+                              },
                             ),
                           ),
-                          // Export button (removed)
-                          Container(),
                         ],
                       ),
                       
@@ -1802,7 +1873,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 child: Row(
                                   children: [
                                     SizedBox( // Name column
-                                      width: 150,
+                                      width: 120,
                                       child: Text(
                                         'Name',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -1813,7 +1884,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Total Distance column
                                       width: 110,
                                       child: Text(
-                                        'Total Distance (km)',
+                                        'Total Distance\n(km)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1822,7 +1893,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Segment Distance column
                                       width: 110,
                                       child: Text(
-                                        'Segment Distance (km)',
+                                        'Segment Dist.\n(km)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1831,7 +1902,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Segment Pace column
                                       width: 110,
                                       child: Text(
-                                        'Segment Pace',
+                                        'Segment Pace\n(min/km)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1840,7 +1911,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Grade Adj. Distance column
                                       width: 110,
                                       child: Text(
-                                        'Grade Adj. (km)',
+                                        'Grade Adj. Dist.\n(km)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1849,7 +1920,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Elevation column
                                       width: 110,
                                       child: Text(
-                                        'Elevation (m)',
+                                        'Elevation\n(m)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1858,7 +1929,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Elev. Gain column
                                       width: 110,
                                       child: Text(
-                                        'Elev. Gain (m)',
+                                        'Elev. Gain\n(m)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1867,7 +1938,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     SizedBox( // Elev. Loss column
                                       width: 110,
                                       child: Text(
-                                        'Elev. Loss (m)',
+                                        'Elev. Loss\n(m)',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                                           fontWeight: FontWeight.bold,
                                         ),
@@ -1883,7 +1954,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       ),
                                     ),
                                     SizedBox( // Segment Time column
-                                      width: 110,
+                                      width: 100,
                                       child: Text(
                                         'Segment Time',
                                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -1902,7 +1973,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                         ),
                                       ),
-                                    const SizedBox(width: 60), // Space for delete button
+                                    const SizedBox(width: 180), // Space for delete button
                                   ],
                                 ),
                               ),
@@ -1933,7 +2004,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         children: [
                                           // Name field (editable)
                                           SizedBox(
-                                            width: 150,
+                                            width: 120,
                                             child: TextFormField(
                                               key: ValueKey('checkpoint_name_${checkpoint.id}'),
                                               focusNode: _nameFocusNodes[index],
@@ -2097,7 +2168,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           
                                           // Time from Previous (read-only)
                                           SizedBox(
-                                            width: 110,
+                                            width: 100,
                                             child: Padding(
                                               padding: const EdgeInsets.symmetric(horizontal: 8),
                                               child: Text(
@@ -2121,10 +2192,41 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           
                                           // Control buttons - adjust pace and delete
                                           SizedBox( // Actions column
-                                            width: 60,
+                                            width: 180,
                                             child: Row(
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
+                                                // Adjustment factor controls
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    IconButton(
+                                                      icon: const Icon(Icons.remove, size: 20),
+                                                      onPressed: () {
+                                                        setState(() {
+                                                          checkpoint.adjustmentFactor -= 5;
+                                                        });
+                                                      },
+                                                      padding: EdgeInsets.zero,
+                                                    ),
+                                                    SizedBox(
+                                                      width: 60,
+                                                      child: Text(
+                                                        '${checkpoint.adjustmentFactor.toStringAsFixed(0)} s/km',
+                                                        textAlign: TextAlign.center,
+                                                      ),
+                                                    ),
+                                                    IconButton(
+                                                      icon: const Icon(Icons.add, size: 20),
+                                                      onPressed: () {
+                                                        setState(() {
+                                                          checkpoint.adjustmentFactor += 5;
+                                                        });
+                                                      },
+                                                      padding: EdgeInsets.zero,
+                                                    ),
+                                                  ],
+                                                ),
                                                 // Delete button
                                                 SizedBox(
                                                   width: 40,
