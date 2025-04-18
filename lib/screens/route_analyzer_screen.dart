@@ -1771,7 +1771,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '60',
+                                                  hintText: '0',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1799,7 +1799,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '30',
+                                                  hintText: '0',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1827,7 +1827,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '500',
+                                                  hintText: '0',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1849,7 +1849,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               child: TextField(
                                                 keyboardType: TextInputType.number,
                                                 decoration: const InputDecoration(
-                                                  hintText: '500',
+                                                  hintText: '0',
                                                   contentPadding: EdgeInsets.symmetric(horizontal: 8),
                                                 ),
                                                 onChanged: (value) {
@@ -1983,15 +1983,16 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         ),
                                       ),
                                     ),
-                                    SizedBox( // Carbs Units column
-                                      width: 100,
-                                      child: Text(
-                                        'Carbs\nUnits',
-                                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                          fontWeight: FontWeight.bold,
+                                    if (carbsPerHour > 0 && gramsPerUnit > 0)
+                                      SizedBox( // Carbs Units column
+                                        width: 100,
+                                        child: Text(
+                                          'Carb units',
+                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                         ),
                                       ),
-                                    ),
                                     // Add Real Time column if start time is set
                                     if (startTime != null) 
                                       SizedBox( // Real Time column
@@ -2207,17 +2208,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                             ),
                                           ),
                                           
-                                          // Carbs Units (read-only)
-                                          SizedBox(
-                                            width: 100,
-                                            child: Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8),
-                                              child: Text(
-                                                '${checkpoint.legUnits} (${checkpoint.cumulativeUnits})',
-                                                textAlign: TextAlign.center,
+                                          if (carbsPerHour > 0 && gramsPerUnit > 0)
+                                            // Carbs Units (read-only)
+                                            SizedBox(
+                                              width: 100,
+                                              child: Padding(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                child: Text(
+                                                  '${checkpoint.legUnits} (${checkpoint.cumulativeUnits})',
+                                                  textAlign: TextAlign.center,
+                                                ),
                                               ),
                                             ),
-                                          ),
                                           
                                           // Add Real Time column if start time is set
                                           if (startTime != null)
