@@ -1661,38 +1661,114 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         children: [
                           // Start time picker
                           Expanded(
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Start Time: '),
-                                TextButton(
-                                  onPressed: () async {
-                                    final TimeOfDay? time = await showTimePicker(
-                                      context: context,
-                                      initialTime: startTime ?? TimeOfDay.now(),
-                                      builder: (BuildContext context, Widget? child) {
-                                        return MediaQuery(
-                                          data: MediaQuery.of(context).copyWith(
-                                            alwaysUse24HourFormat: true,
-                                          ),
-                                          child: child!,
+                                // First row - Start time
+                                Row(
+                                  children: [
+                                    const Text('Start Time: '),
+                                    TextButton(
+                                      onPressed: () async {
+                                        final TimeOfDay? time = await showTimePicker(
+                                          context: context,
+                                          initialTime: startTime ?? TimeOfDay.now(),
+                                          builder: (BuildContext context, Widget? child) {
+                                            return MediaQuery(
+                                              data: MediaQuery.of(context).copyWith(
+                                                alwaysUse24HourFormat: true,
+                                              ),
+                                              child: child!,
+                                            );
+                                          },
                                         );
+                                        if (time != null && mounted) {
+                                          setState(() {
+                                            startTime = time;
+                                          });
+                                        }
                                       },
-                                    );
-                                    if (time != null && mounted) {
-                                      setState(() {
-                                        startTime = time;
-                                      });
-                                    }
-                                  },
-                                  child: Text(
-                                    startTime != null 
-                                        ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
-                                        : 'Set Time',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: startTime != null ? Colors.blue : null,
+                                      child: Text(
+                                        startTime != null
+                                            ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
+                                            : 'Set Time',
+                                      ),
                                     ),
-                                  ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                // Second row - Carbs inputs
+                                Row(
+                                  children: [
+                                    const Text('Carbs per hour: '),
+                                    SizedBox(
+                                      width: 45,
+                                      child: TextField(
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          hintText: '60',
+                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                        ),
+                                        onChanged: (value) {
+                                          // Handle carbs per hour input
+                                        },
+                                      ),
+                                    ),
+                                    const Text('g/hour'),
+                                    Container(width: 8),
+                                    const Text('Carb unit: '),
+                                    SizedBox(
+                                      width: 45,
+                                      child: TextField(
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          hintText: '30',
+                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                        ),
+                                        onChanged: (value) {
+                                          // Handle carbs per hour input
+                                        },
+                                      ),
+                                    ),
+                                    const Text('g'),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                // Third row - Fluid inputs
+                                Row(
+                                  children: [
+                                    const Text('Fluid per hour: '),
+                                    SizedBox(
+                                      width: 45,
+                                      child: TextField(
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          hintText: '500',
+                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                        ),
+                                        onChanged: (value) {
+                                          // Handle fluid per hour input
+                                        },
+                                      ),
+                                    ),
+                                    const Text('ml/h'),
+                                    Container(width: 8),
+                                    const Text('Fluid unit: '),
+                                    SizedBox(
+                                      width: 45,
+                                      child: TextField(
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          hintText: '500',
+                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                        ),
+                                        onChanged: (value) {
+                                          // Handle fluid per hour input
+                                        },
+                                      ),
+                                    ),
+                                    const Text('ml'),
+                                  ],
                                 ),
                               ],
                             ),
