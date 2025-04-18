@@ -857,6 +857,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   @override
   void initState() {
     super.initState();
+    // ... existing code ...
   }
 
   @override
@@ -2501,11 +2502,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
   // Add a new checkpoint with the given distance
   void addCheckpoint() {
+    // Create a new checkpoint with a unique ID and timestamp to ensure uniqueness
+    final newCheckpoint = CheckpointData(distance: 0.0);
+    newCheckpoint.id = DateTime.now().millisecondsSinceEpoch.toString();
+    
     setState(() {
-      // Create a new checkpoint with a unique ID and timestamp to ensure uniqueness
-      final newCheckpoint = CheckpointData(distance: 0.0);
-      newCheckpoint.id = DateTime.now().millisecondsSinceEpoch.toString();
-      
       // Add the checkpoint
       checkpoints.add(newCheckpoint);
       
@@ -2531,6 +2532,14 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       
       // Recalculate metrics for all checkpoints to ensure consistency
       _calculateCheckpointMetrics(startIndex: 0);
+      
+      // Recalculate carbs and fluid units for all checkpoints if values are set
+      if (carbsPerHour > 0 && gramsPerUnit > 0) {
+        calculateCarbsUnits();
+      }
+      if (fluidPerHour > 0 && mlPerUnit > 0) {
+        calculateFluidUnits();
+      }
     });
   }
 
@@ -2693,47 +2702,44 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         checkpoint.cumulativeGradeAdjustedDistance = checkpoints[i-1].cumulativeGradeAdjustedDistance + checkpoint.gradeAdjustedDistance;
       }
       
-      // Find the closest time point to this distance
+      // Calculate cumulative time
       double cumulativeTime = 0;
       
-      // Handle edge cases for time calculation
-      if (checkpoint.distance <= 0 && timePoints.isNotEmpty) {
+      // Find the closest time points and interpolate
+      FlSpot? prevPoint;
+      FlSpot? nextPoint;
+      
+      for (int j = 0; j < timePoints.length - 1; j++) {
+        if (timePoints[j].x <= checkpoint.distance && timePoints[j + 1].x >= checkpoint.distance) {
+          prevPoint = timePoints[j];
+          nextPoint = timePoints[j + 1];
+          break;
+        }
+      }
+      
+      if (prevPoint != null && nextPoint != null) {
+        // Interpolate between the two points
+        double timeDiff = nextPoint.y - prevPoint.y;
+        double distDiff = nextPoint.x - prevPoint.x;
+        if (distDiff > 0) {  // Avoid division by zero
+          double ratio = (checkpoint.distance - prevPoint.x) / distDiff;
+          cumulativeTime = prevPoint.y + (timeDiff * ratio);
+        } else {
+          cumulativeTime = prevPoint.y;
+        }
+      } else if (checkpoint.distance <= 0) {
         // At start of route
         cumulativeTime = 0;
       } else if (checkpoint.distance >= timePoints.last.x) {
         // At or beyond end of route
         cumulativeTime = timePoints.last.y;
       } else {
-        // Somewhere in the middle - find the closest time points and interpolate
-        FlSpot? prevPoint;
-        FlSpot? nextPoint;
-        
-        for (int j = 0; j < timePoints.length - 1; j++) {
-          if (timePoints[j].x <= checkpoint.distance && timePoints[j + 1].x >= checkpoint.distance) {
-            prevPoint = timePoints[j];
-            nextPoint = timePoints[j + 1];
-            break;
-          }
-        }
-        
-        if (prevPoint != null && nextPoint != null) {
-          // Interpolate between the two points
-          double timeDiff = nextPoint.y - prevPoint.y;
-          double distDiff = nextPoint.x - prevPoint.x;
-          if (distDiff > 0) {  // Avoid division by zero
-            double ratio = (checkpoint.distance - prevPoint.x) / distDiff;
-            cumulativeTime = prevPoint.y + (timeDiff * ratio);
+        // Fallback to the closest point
+        for (var timePoint in timePoints) {
+          if (timePoint.x <= checkpoint.distance) {
+            cumulativeTime = timePoint.y;
           } else {
-            cumulativeTime = prevPoint.y;
-          }
-        } else {
-          // Fallback to the old method if we couldn't find bracketing points
-          for (var timePoint in timePoints) {
-            if (timePoint.x <= checkpoint.distance) {
-              cumulativeTime = timePoint.y;
-            } else {
-              break;
-            }
+            break;
           }
         }
       }
@@ -3654,10 +3660,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   void calculateCarbsUnits() {
     if (checkpoints.isEmpty) return;
     if (carbsPerHour <= 0 || gramsPerUnit <= 0) return;
+    
+    List<CheckpointData> updatedCheckpoints = List.from(checkpoints);
     int previousCumulativeUnits = 0;
 
-    for (int i = 0; i < checkpoints.length; i++) {
-      final checkpoint = checkpoints[i];
+    for (int i = 0; i < updatedCheckpoints.length; i++) {
+      final checkpoint = updatedCheckpoints[i];
       
       // Convert cumulative time to hours
       double currentTotalTimeHours = checkpoint.cumulativeTime / 60.0;
@@ -3672,14 +3680,16 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       int legUnits = currentCumulativeUnits - previousCumulativeUnits;
       
       // Update checkpoint values
-      setState(() {
-        checkpoint.legUnits = legUnits;
-        checkpoint.cumulativeUnits = currentCumulativeUnits;
-      });
+      checkpoint.legUnits = legUnits;
+      checkpoint.cumulativeUnits = currentCumulativeUnits;
       
       // Update previous cumulative units
       previousCumulativeUnits = currentCumulativeUnits;
     }
+
+    setState(() {
+      checkpoints = updatedCheckpoints;
+    });
   }
 
   // Function to calculate fluid units for checkpoints
@@ -3687,10 +3697,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (checkpoints.isEmpty) return;
     if (fluidPerHour <= 0 || mlPerUnit <= 0) return;
 
+    List<CheckpointData> updatedCheckpoints = List.from(checkpoints);
     int previousCumulativeFluidUnits = 0;
 
-    for (int i = 0; i < checkpoints.length; i++) {
-      final checkpoint = checkpoints[i];
+    for (int i = 0; i < updatedCheckpoints.length; i++) {
+      final checkpoint = updatedCheckpoints[i];
       
       // Convert cumulative time to hours
       double currentTotalTimeHours = checkpoint.cumulativeTime / 60.0;
@@ -3705,14 +3716,16 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       int legFluidUnits = currentCumulativeFluidUnits - previousCumulativeFluidUnits;
       
       // Update checkpoint values
-      setState(() {
-        checkpoint.legFluidUnits = legFluidUnits;
-        checkpoint.cumulativeFluidUnits = currentCumulativeFluidUnits;
-      });
+      checkpoint.legFluidUnits = legFluidUnits;
+      checkpoint.cumulativeFluidUnits = currentCumulativeFluidUnits;
       
       // Update previous cumulative units
       previousCumulativeFluidUnits = currentCumulativeFluidUnits;
     }
+
+    setState(() {
+      checkpoints = updatedCheckpoints;
+    });
   }
 
   // Function to parse time string to hours
