@@ -4,68 +4,26 @@ import 'package:gpx/gpx.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'dart:math' show sin, cos, sqrt, atan2, max, min, pow, exp, pi, Point;
+// Add specific math imports required by analyzer indirectly
+import 'dart:math' show max, min, pi, Point, pow, sin, cos, atan2, sqrt, exp;
 import 'dart:async';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 import 'package:excel/excel.dart' as xl;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io';
 
-// Class to store checkpoint data
-class CheckpointData {
-  double distance;
-  double elevation = 0;
-  double elevationGain = 0;
-  double elevationLoss = 0;
-  double cumulativeTime = 0;
-  double timeFromPrevious = 0;
-  String id = DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
-  String? name;
-  // Base grade adjusted pace for the segment ending at this checkpoint
-  double baseGradeAdjustedPace = 0;
-  // Add grade adjusted distance
-  double gradeAdjustedDistance = 0;
-  double cumulativeGradeAdjustedDistance = 0;
-  // Adjustment factor in s/km
-  double adjustmentFactor = 0;
-  // Carbs calculation fields
-  int legUnits = 0;
-  int cumulativeUnits = 0;
-  // Fluid calculation fields
-  int legFluidUnits = 0;
-  int cumulativeFluidUnits = 0;
+// Import new files
+import '../models/checkpoint_data.dart';
+import '../models/chart_data.dart';
+import '../utils/constants.dart';
+import '../utils/formatters.dart';
+import '../utils/calculations.dart';
 
-  CheckpointData({required this.distance});
-  
-  // Create a copy of this checkpoint
-  CheckpointData copy() {
-    final cp = CheckpointData(distance: distance);
-    cp.elevation = elevation;
-    cp.elevationGain = elevationGain;
-    cp.elevationLoss = elevationLoss;
-    cp.cumulativeTime = cumulativeTime;
-    cp.timeFromPrevious = timeFromPrevious;
-    cp.id = id;
-    cp.name = name;
-    cp.baseGradeAdjustedPace = baseGradeAdjustedPace;
-    cp.gradeAdjustedDistance = gradeAdjustedDistance;
-    cp.cumulativeGradeAdjustedDistance = cumulativeGradeAdjustedDistance;
-    cp.adjustmentFactor = adjustmentFactor;
-    cp.legUnits = legUnits;
-    cp.cumulativeUnits = cumulativeUnits;
-    cp.legFluidUnits = legFluidUnits;
-    cp.cumulativeFluidUnits = cumulativeFluidUnits;
-    return cp;
-  }
-}
+// Class to store checkpoint data - MOVED to lib/models/checkpoint_data.dart
+// class CheckpointData { ... }
 
-// Class to store chart data for the summary section
-class ChartData {
-  final String category;
-  final double value;
-  
-  ChartData(this.category, this.value);
-}
+// Class to store chart data for the summary section - MOVED to lib/models/chart_data.dart
+// class ChartData { ... }
 
 class RouteAnalyzerScreen extends StatefulWidget {
   const RouteAnalyzerScreen({super.key});
@@ -93,10 +51,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   Timer? _checkpointUpdateTimer; // Timer for debouncing checkpoint updates
   final mapController = MapController();
   List<double> smoothedGradients = [];
-  
+
   // Add state for start time
   TimeOfDay? startTime;
-  
+
   // Add state for pending checkpoint creation
   bool _isPendingCheckpointCreation = false;
   double? _pendingCheckpointDistance;
