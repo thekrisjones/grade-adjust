@@ -5,7 +5,7 @@ The app also includes a grade adjusted pace calculator. The grade adjustment cal
 
 ## Live Demo
 
-You can try the app online at: [https://yourusername.github.io/grade-adjust/](https://yourusername.github.io/grade-adjust/)
+You can try the app online at: [https://thekrisjones.github.io/grade-adjust/](https://thekrisjones.github.io/grade-adjust/)
 
 ## Features
 
