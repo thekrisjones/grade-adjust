@@ -1,5 +1,3 @@
-import 'dart:math' show pow; // Needed for copy() which might use pow implicitly if fields change
-
 class CheckpointData {
   double distance;
   double elevation = 0;
@@ -7,7 +5,8 @@ class CheckpointData {
   double elevationLoss = 0;
   double cumulativeTime = 0;
   double timeFromPrevious = 0;
-  String id = DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
+  String id =
+      DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
   String? name;
   // Base grade adjusted pace for the segment ending at this checkpoint
   double baseGradeAdjustedPace = 0;
@@ -45,4 +44,4 @@ class CheckpointData {
     cp.cumulativeFluidUnits = cumulativeFluidUnits;
     return cp;
   }
-} 
+}

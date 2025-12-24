@@ -16,8 +16,10 @@ double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
 
   // Haversine formula
   double a = sin(dLat / 2.0) * sin(dLat / 2.0) + // Use 2.0 for double division
-             cos(lat1Rad) * cos(lat2Rad) *
-             sin(dLon / 2.0) * sin(dLon / 2.0); // Use 2.0 for double division
+      cos(lat1Rad) *
+          cos(lat2Rad) *
+          sin(dLon / 2.0) *
+          sin(dLon / 2.0); // Use 2.0 for double division
   // atan2 and sqrt return double, ensure multiplication results in double
   double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a)); // Use 2.0, 1.0
 
@@ -26,16 +28,15 @@ double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
 }
 
 /// Calculates the grade adjustment factor based on gradient percentage.
-/// Uses a polynomial approximation.
+/// Uses a 4th-order polynomial approximation as per target algorithm.
 double calculateGradeAdjustment(double gradientPercent) {
   // Clamp gradient to ±45%
   double g = gradientPercent.clamp(-clampGradientPercent, clampGradientPercent);
-  return (-0.0000000005968925381 * pow(g, 5)) +
-         (-0.000000366663628576468 * pow(g, 4)) +
-         (-0.0000016677964832213 * pow(g, 3)) +
-         (0.00182471253566879 * pow(g, 2)) +
-         (0.0301350193447792 * g) +
-         0.99758437262606;
+  return (-0.000000447713 * pow(g, 4)) +
+      (-0.000003068688 * pow(g, 3)) +
+      (0.001882643005 * pow(g, 2)) +
+      (0.030457306268 * g) +
+      1.0;
 }
 
 /// Calculates gradients between elevation points.
@@ -60,7 +61,8 @@ List<double> calculateGradients(List<FlSpot> points) {
     final gradient = (dy / dx) * 100;
 
     // Clamp extreme values that might be due to GPS errors
-    final clampedGradient = gradient.clamp(-clampGradientPercent, clampGradientPercent);
+    final clampedGradient =
+        gradient.clamp(-clampGradientPercent, clampGradientPercent);
     grads.add(clampedGradient);
   }
 
@@ -74,12 +76,11 @@ List<double> calculateGradients(List<FlSpot> points) {
 
   // Ensure the output list has the same length as the input points list
   while (grads.length < points.length) {
-      grads.add(grads.isNotEmpty ? grads.last : 0.0);
+    grads.add(grads.isNotEmpty ? grads.last : 0.0);
   }
-   if (grads.length > points.length) {
-       grads = grads.sublist(0, points.length);
-   }
-
+  if (grads.length > points.length) {
+    grads = grads.sublist(0, points.length);
+  }
 
   return grads;
 }
@@ -123,177 +124,190 @@ List<double> smoothGradients(List<double> gradients, int windowSize) {
 
 /// Smooths FlSpot data using a simple moving average.
 List<FlSpot> smoothData(List<FlSpot> points, int windowSize) {
-    if (points.length < windowSize || windowSize <= 1) {
-      return points; // Not enough data to smooth or window too small
+  if (points.length < windowSize || windowSize <= 1) {
+    return points; // Not enough data to smooth or window too small
+  }
+
+  List<FlSpot> smoothedPoints = [];
+  int halfWindow = windowSize ~/ 2;
+
+  // Handle the beginning points (use smaller window or copy directly)
+  for (int i = 0; i < halfWindow; i++) {
+    smoothedPoints.add(points[i]); // Or calculate average with available points
+  }
+
+  // Apply moving average for the main part
+  for (int i = halfWindow; i < points.length - halfWindow; i++) {
+    double sumY = 0;
+    for (int j = i - halfWindow; j <= i + halfWindow; j++) {
+      sumY += points[j].y;
     }
+    smoothedPoints.add(FlSpot(points[i].x, sumY / windowSize));
+  }
 
-    List<FlSpot> smoothedPoints = [];
-    int halfWindow = windowSize ~/ 2;
+  // Handle the ending points (use smaller window or copy directly)
+  for (int i = points.length - halfWindow; i < points.length; i++) {
+    smoothedPoints.add(points[i]); // Or calculate average with available points
+  }
 
-    // Handle the beginning points (use smaller window or copy directly)
-    for (int i = 0; i < halfWindow; i++) {
-       smoothedPoints.add(points[i]); // Or calculate average with available points
-    }
+  // Ensure output length matches input length
+  if (smoothedPoints.length != points.length) {
+    // This might happen if window calculation logic needs adjustment
+    // For now, return original points as a fallback
+    print("Warning: Smoothed data length mismatch. Returning original data.");
+    return points;
+  }
 
-    // Apply moving average for the main part
-    for (int i = halfWindow; i < points.length - halfWindow; i++) {
-      double sumY = 0;
-      for (int j = i - halfWindow; j <= i + halfWindow; j++) {
-        sumY += points[j].y;
-      }
-      smoothedPoints.add(FlSpot(points[i].x, sumY / windowSize));
-    }
-
-    // Handle the ending points (use smaller window or copy directly)
-     for (int i = points.length - halfWindow; i < points.length; i++) {
-       smoothedPoints.add(points[i]); // Or calculate average with available points
-     }
-
-    // Ensure output length matches input length
-    if (smoothedPoints.length != points.length) {
-        // This might happen if window calculation logic needs adjustment
-        // For now, return original points as a fallback
-        print("Warning: Smoothed data length mismatch. Returning original data.");
-        return points;
-    }
-
-
-    return smoothedPoints;
+  return smoothedPoints;
 }
 
 /// Calculates the grade-adjusted distance for a segment.
-double calculateSegmentGradeAdjustedDistance(double startDistance, double endDistance, List<FlSpot> elevationPoints, List<double> smoothedGradients) {
-    if (elevationPoints.isEmpty || smoothedGradients.isEmpty || startDistance >= endDistance) {
-        return max(0, endDistance - startDistance); // Return geometric distance or 0
+double calculateSegmentGradeAdjustedDistance(
+    double startDistance,
+    double endDistance,
+    List<FlSpot> elevationPoints,
+    List<double> smoothedGradients) {
+  if (elevationPoints.isEmpty ||
+      smoothedGradients.isEmpty ||
+      startDistance >= endDistance) {
+    return max(
+        0, endDistance - startDistance); // Return geometric distance or 0
+  }
+
+  double totalAdjustedDistance = 0;
+  int startIdx = -1, endIdx = -1;
+
+  // Find the indices in elevationPoints corresponding to start and end distances
+  for (int i = 0; i < elevationPoints.length; i++) {
+    if (startIdx == -1 && elevationPoints[i].x >= startDistance) {
+      startIdx = i;
+    }
+    if (elevationPoints[i].x >= endDistance) {
+      endIdx = i;
+      break;
+    }
+  }
+
+  // If endDistance is beyond the last point, use the last index
+  if (endIdx == -1) {
+    endIdx = elevationPoints.length - 1;
+  }
+  // If startDistance is beyond the last point, return 0
+  if (startIdx == -1) {
+    startIdx = elevationPoints.length -
+        1; // Will result in 0 distance calculation below
+  }
+
+  // Iterate over the relevant segments within the range
+  double currentPos = startDistance;
+  for (int i = startIdx; i <= endIdx; i++) {
+    double pointDist = elevationPoints[i].x;
+    double prevPointDist = (i > 0) ? elevationPoints[i - 1].x : 0;
+
+    // Determine the actual start and end points for this segment calculation
+    double segStart = max(currentPos, prevPointDist);
+    double segEnd = min(pointDist, endDistance);
+
+    if (segEnd > segStart) {
+      double segmentDistance = segEnd - segStart;
+
+      // Get gradient for this segment (use gradient at the end of the small segment)
+      int gradientIndex = min(i, smoothedGradients.length - 1);
+      double gradientPercent =
+          gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
+
+      // Calculate grade adjustment factor
+      double adjustment = calculateGradeAdjustment(gradientPercent);
+
+      // Apply adjustment to segment distance
+      // Ensure adjustment doesn't result in negative distance
+      totalAdjustedDistance += segmentDistance * max(0, adjustment);
+
+      // Move current position forward
+      currentPos = segEnd;
     }
 
-    double totalAdjustedDistance = 0;
-    int startIdx = -1, endIdx = -1;
+    // Break if we've processed the full distance
+    if (currentPos >= endDistance) break;
+  }
 
-    // Find the indices in elevationPoints corresponding to start and end distances
-    for (int i = 0; i < elevationPoints.length; i++) {
-        if (startIdx == -1 && elevationPoints[i].x >= startDistance) {
-            startIdx = i;
-        }
-        if (elevationPoints[i].x >= endDistance) {
-            endIdx = i;
-            break;
-        }
-    }
-
-    // If endDistance is beyond the last point, use the last index
-    if (endIdx == -1) {
-        endIdx = elevationPoints.length - 1;
-    }
-    // If startDistance is beyond the last point, return 0
-    if (startIdx == -1) {
-        startIdx = elevationPoints.length -1; // Will result in 0 distance calculation below
-    }
-
-
-    // Iterate over the relevant segments within the range
-    double currentPos = startDistance;
-    for (int i = startIdx; i <= endIdx; i++) {
-        double pointDist = elevationPoints[i].x;
-        double prevPointDist = (i > 0) ? elevationPoints[i-1].x : 0;
-
-        // Determine the actual start and end points for this segment calculation
-        double segStart = max(currentPos, prevPointDist);
-        double segEnd = min(pointDist, endDistance);
-
-        if (segEnd > segStart) {
-            double segmentDistance = segEnd - segStart;
-
-            // Get gradient for this segment (use gradient at the end of the small segment)
-            int gradientIndex = min(i, smoothedGradients.length - 1);
-            double gradientPercent = gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
-
-            // Calculate grade adjustment factor
-            double adjustment = calculateGradeAdjustment(gradientPercent);
-
-            // Apply adjustment to segment distance
-            // Ensure adjustment doesn't result in negative distance
-            totalAdjustedDistance += segmentDistance * max(0, adjustment);
-
-            // Move current position forward
-            currentPos = segEnd;
-        }
-
-         // Break if we've processed the full distance
-        if (currentPos >= endDistance) break;
-    }
-
-    return totalAdjustedDistance;
+  return totalAdjustedDistance;
 }
 
 /// Calculates the base grade-adjusted pace for a segment in seconds/km.
-double getSegmentBaseGradeAdjustedPace(double startDistance, double endDistance, List<FlSpot> elevationPoints, List<double> smoothedGradients, double basePaceSelected) {
-    if (elevationPoints.isEmpty || smoothedGradients.isEmpty || startDistance >= endDistance) return basePaceSelected;
+double getSegmentBaseGradeAdjustedPace(
+    double startDistance,
+    double endDistance,
+    List<FlSpot> elevationPoints,
+    List<double> smoothedGradients,
+    double basePaceSelected) {
+  if (elevationPoints.isEmpty ||
+      smoothedGradients.isEmpty ||
+      startDistance >= endDistance) return basePaceSelected;
 
-    double weightedPaceSum = 0;
-    double totalDistance = 0;
-    int startIdx = -1, endIdx = -1;
+  double weightedPaceSum = 0;
+  double totalDistance = 0;
+  int startIdx = -1, endIdx = -1;
 
-     // Find the indices in elevationPoints corresponding to start and end distances
-    for (int i = 0; i < elevationPoints.length; i++) {
-        if (startIdx == -1 && elevationPoints[i].x >= startDistance) {
-            startIdx = i;
-        }
-        if (elevationPoints[i].x >= endDistance) {
-            endIdx = i;
-            break;
-        }
+  // Find the indices in elevationPoints corresponding to start and end distances
+  for (int i = 0; i < elevationPoints.length; i++) {
+    if (startIdx == -1 && elevationPoints[i].x >= startDistance) {
+      startIdx = i;
     }
-
-    // If endDistance is beyond the last point, use the last index
-    if (endIdx == -1) endIdx = elevationPoints.length - 1;
-    // If startDistance is beyond the last point, return base pace
-    if (startIdx == -1) return basePaceSelected;
-
-
-    double currentPos = startDistance;
-    for (int i = startIdx; i <= endIdx; i++) {
-        double pointDist = elevationPoints[i].x;
-        double prevPointDist = (i > 0) ? elevationPoints[i-1].x : 0;
-
-        // Determine the actual start and end points for this segment calculation
-        double segStart = max(currentPos, prevPointDist);
-        double segEnd = min(pointDist, endDistance);
-
-
-        if (segEnd > segStart) {
-            double segmentDistance = segEnd - segStart;
-
-            // Get gradient for this segment (use gradient at the end of the small segment)
-            int gradientIndex = min(i, smoothedGradients.length - 1);
-            double gradientPercent = gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
-
-             // Calculate grade adjustment factor
-            double adjustment = calculateGradeAdjustment(gradientPercent);
-            double segmentPace = basePaceSelected * adjustment;
-            // Apply min segment pace constraint if needed (optional here, applied later)
-            // segmentPace = max(segmentPace, minSegmentPace);
-
-            weightedPaceSum += segmentPace * segmentDistance;
-            totalDistance += segmentDistance;
-
-             // Move current position forward
-            currentPos = segEnd;
-        }
-         // Break if we've processed the full distance
-        if (currentPos >= endDistance) break;
+    if (elevationPoints[i].x >= endDistance) {
+      endIdx = i;
+      break;
     }
+  }
 
+  // If endDistance is beyond the last point, use the last index
+  if (endIdx == -1) endIdx = elevationPoints.length - 1;
+  // If startDistance is beyond the last point, return base pace
+  if (startIdx == -1) return basePaceSelected;
 
-    if (totalDistance > 0) {
-      return weightedPaceSum / totalDistance;
-    } else {
-      // Handle zero distance case: return base pace or pace at the start point
-       int startGradientIndex = min(startIdx, smoothedGradients.length - 1);
-       if (startGradientIndex >= 0) {
-          double startAdjustment = calculateGradeAdjustment(smoothedGradients[startGradientIndex]);
-          return basePaceSelected * startAdjustment;
-       }
-       return basePaceSelected;
+  double currentPos = startDistance;
+  for (int i = startIdx; i <= endIdx; i++) {
+    double pointDist = elevationPoints[i].x;
+    double prevPointDist = (i > 0) ? elevationPoints[i - 1].x : 0;
+
+    // Determine the actual start and end points for this segment calculation
+    double segStart = max(currentPos, prevPointDist);
+    double segEnd = min(pointDist, endDistance);
+
+    if (segEnd > segStart) {
+      double segmentDistance = segEnd - segStart;
+
+      // Get gradient for this segment (use gradient at the end of the small segment)
+      int gradientIndex = min(i, smoothedGradients.length - 1);
+      double gradientPercent =
+          gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
+
+      // Calculate grade adjustment factor
+      double adjustment = calculateGradeAdjustment(gradientPercent);
+      double segmentPace = basePaceSelected * adjustment;
+      // Apply min segment pace constraint if needed (optional here, applied later)
+      // segmentPace = max(segmentPace, minSegmentPace);
+
+      weightedPaceSum += segmentPace * segmentDistance;
+      totalDistance += segmentDistance;
+
+      // Move current position forward
+      currentPos = segEnd;
     }
-  } 
+    // Break if we've processed the full distance
+    if (currentPos >= endDistance) break;
+  }
+
+  if (totalDistance > 0) {
+    return weightedPaceSum / totalDistance;
+  } else {
+    // Handle zero distance case: return base pace or pace at the start point
+    int startGradientIndex = min(startIdx, smoothedGradients.length - 1);
+    if (startGradientIndex >= 0) {
+      double startAdjustment =
+          calculateGradeAdjustment(smoothedGradients[startGradientIndex]);
+      return basePaceSelected * startAdjustment;
+    }
+    return basePaceSelected;
+  }
+}
