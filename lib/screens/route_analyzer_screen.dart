@@ -80,6 +80,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   static const double maxPaceSeconds = 900; // 15:00
   // Add minimum allowed segment pace (2:00 min/km)
   static const double minSegmentPace = 120; // 2:00 min/km
+
+  // Manual pace adjustment constants
+  static const double minAllowedPaceSeconds = 160; // 2:40 min/km
+  static const double maxAllowedPaceSeconds = 2400; // 40:00 min/km
+  static const double maxAdjustmentSeconds = 60; // ±60 s/km
+  static const double adjustmentIncrement = 5; // 5 s/km increments
   // Remove the flag to show adjusted pace column
 
   // Linear pacing strategy variables
@@ -87,6 +93,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   double pacingVariationPercent =
       15.0; // Default 15% variation from start to finish (range: -10% to +30%)
   List<double> pacingMultipliers = []; // Multipliers for each segment
+
+  // Pacing vector - single source of truth for all segment paces (in seconds/km)
+  List<double> pacingVector =
+      []; // One pace value per segment, includes all adjustments
 
   // Add state variables for min/max pace for chart scaling & color
   double _minPace = 90; // Y-axis min (clamped)
@@ -169,11 +179,163 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     }
   }
 
+  /// Updates the pacing vector with base pace + linear adjustments + manual adjustments
+  /// This is the single source of truth for all segment paces
+  void updatePacingVector() {
+    if (elevationPoints.isEmpty) {
+      pacingVector = [];
+      return;
+    }
+
+    int segmentCount = elevationPoints.length;
+
+    // Step 1: Initialize with base average pace for all segments
+    pacingVector = List.filled(segmentCount, selectedPaceSeconds);
+
+    // Step 2: Apply linear pacing adjustments if enabled
+    if (useLinearPacing && pacingMultipliers.length == segmentCount) {
+      for (int i = 0; i < segmentCount; i++) {
+        pacingVector[i] = pacingVector[i] * pacingMultipliers[i];
+      }
+    }
+
+    // Step 3: Apply manual adjustments from checkpoints
+    // Map checkpoint adjustments to the correct pacing vector segments
+    for (int checkpointIndex = 0;
+        checkpointIndex < checkpoints.length;
+        checkpointIndex++) {
+      if (checkpoints[checkpointIndex].adjustmentFactor != 0) {
+        // Find the segment that this checkpoint defines
+        double segmentStartDistance = checkpointIndex > 0
+            ? checkpoints[checkpointIndex - 1].distance
+            : 0.0;
+        double segmentEndDistance = checkpoints[checkpointIndex].distance;
+
+        // Apply the manual adjustment to ALL elevation points in this segment
+        for (int i = 0; i < elevationPoints.length; i++) {
+          double pointDistance = elevationPoints[i].x;
+
+          // Check if this elevation point is within the segment
+          if (pointDistance > segmentStartDistance &&
+              pointDistance <= segmentEndDistance) {
+            // Apply manual adjustment in seconds per kilometer
+            pacingVector[i] =
+                pacingVector[i] + checkpoints[checkpointIndex].adjustmentFactor;
+
+            // Validate the adjusted pace is within limits
+            pacingVector[i] = pacingVector[i]
+                .clamp(minAllowedPaceSeconds, maxAllowedPaceSeconds);
+          }
+        }
+      }
+    }
+  }
+
+  /// Validates if a pace adjustment is within allowed limits
+  bool isValidPaceAdjustment(double basePaceSeconds, double adjustmentSeconds) {
+    double adjustedPace = basePaceSeconds + adjustmentSeconds;
+    return adjustedPace >= minAllowedPaceSeconds &&
+        adjustedPace <= maxAllowedPaceSeconds &&
+        adjustmentSeconds.abs() <= maxAdjustmentSeconds;
+  }
+
+  /// Validates if the overall average pace would remain within limits
+  bool isValidAveragePace(double proposedAveragePaceSeconds) {
+    return proposedAveragePaceSeconds >= minAllowedPaceSeconds &&
+        proposedAveragePaceSeconds <= maxAllowedPaceSeconds;
+  }
+
+  /// Redistributes time across non-manually-adjusted segments to maintain average pace
+  /// Returns true if redistribution was successful, false if impossible
+  bool redistributeAdjustmentTime(int adjustedSegmentIndex, double timeChange) {
+    if (checkpoints.isEmpty || elevationPoints.isEmpty) return false;
+
+    // Calculate total distance and time to determine target average pace
+    double totalDistance = elevationPoints.last.x; // Total route distance
+    double totalTargetTime =
+        (totalDistance * selectedPaceSeconds) / 60.0; // Target time in minutes
+
+    // Calculate current total time from the timePoints
+    double currentTotalTime = timePoints.isNotEmpty ? timePoints.last.y : 0.0;
+
+    // Calculate how much time we need to redistribute
+    double timeDifference = currentTotalTime - totalTargetTime;
+
+    if (timeDifference.abs() < 0.01) {
+      // Already very close to target, no redistribution needed
+      return true;
+    }
+
+    // Find all non-manually-adjusted segments
+    List<int> adjustableSegments = [];
+    double adjustableDistance = 0.0;
+
+    for (int i = 0; i < checkpoints.length; i++) {
+      if (checkpoints[i].adjustmentFactor == 0) {
+        // This segment can be adjusted to compensate
+        double segmentStartDistance = i > 0 ? checkpoints[i - 1].distance : 0.0;
+        double segmentEndDistance = checkpoints[i].distance;
+        double segmentDistance = segmentEndDistance - segmentStartDistance;
+
+        adjustableSegments.add(i);
+        adjustableDistance += segmentDistance;
+      }
+    }
+
+    if (adjustableSegments.isEmpty || adjustableDistance <= 0) {
+      return false;
+    }
+
+    // Calculate the pace adjustment needed per kilometer of adjustable segments
+    double adjustmentPerKm =
+        -(timeDifference * 60.0) / adjustableDistance; // Convert to s/km
+
+    // Limit the adjustment to prevent extreme paces
+    double maxAutoAdjustment = 30.0; // Max 30 s/km auto adjustment
+    if (adjustmentPerKm.abs() > maxAutoAdjustment) {
+      adjustmentPerKm = adjustmentPerKm.sign * maxAutoAdjustment;
+    }
+
+    // Apply the adjustment to all adjustable segments
+    for (int segmentIndex in adjustableSegments) {
+      // Apply adjustment to all elevation points in this segment
+      double segmentStartDistance =
+          segmentIndex > 0 ? checkpoints[segmentIndex - 1].distance : 0.0;
+      double segmentEndDistance = checkpoints[segmentIndex].distance;
+
+      for (int i = 0; i < elevationPoints.length; i++) {
+        double pointDistance = elevationPoints[i].x;
+        if (pointDistance > segmentStartDistance &&
+            pointDistance <= segmentEndDistance) {
+          pacingVector[i] = (pacingVector[i] + adjustmentPerKm)
+              .clamp(minAllowedPaceSeconds, maxAllowedPaceSeconds);
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /// Resets all manual pace adjustments to zero
+  void resetAllManualAdjustments() {
+    for (var checkpoint in checkpoints) {
+      checkpoint.adjustmentFactor = 0;
+    }
+    // Recalculate without manual adjustments
+    calculateTimePoints();
+    if (checkpoints.isNotEmpty) {
+      _calculateCheckpointMetrics(startIndex: 0);
+    }
+  }
+
   void calculateTimePoints() {
     if (elevationPoints.isEmpty || smoothedGradients.isEmpty) return;
 
     // Generate linear pacing multipliers if strategy is enabled
     generateLinearPacingMultipliers();
+
+    // Update the unified pacing vector with all adjustments
+    updatePacingVector();
 
     List<FlSpot> newTimePoints = [];
     List<FlSpot> newPacePoints = []; // <-- Add this
@@ -220,15 +382,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       double adjustment =
           calculateGradeAdjustment(smoothedGradients[gradientIndex]);
 
-      // Calculate pace for this segment (in seconds per km)
-      double basePace = selectedPaceSeconds;
+      // Get pace from pacing vector (already includes base pace + linear + manual adjustments)
+      double basePace = i < pacingVector.length
+          ? pacingVector[i]
+          : selectedPaceSeconds; // Fallback to average if vector not ready
 
-      // Apply linear pacing strategy if enabled
-      if (useLinearPacing && i < pacingMultipliers.length) {
-        basePace = basePace * pacingMultipliers[i];
-      }
-
-      // Apply grade adjustment
+      // Apply grade adjustment to get final pace
       double gradePace = basePace * adjustment;
 
       // Ensure pace doesn't go below minimum allowed pace (2:00 min/km)
@@ -1181,80 +1340,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                   ),
                         ),
                       ),
-                    // Linear Pacing Strategy Controls
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: useLinearPacing,
-                          onChanged: (value) {
-                            setState(() {
-                              useLinearPacing = value ?? false;
-                              calculateTimePoints();
-                              if (checkpoints.isNotEmpty) {
-                                _calculateCheckpointMetrics(startIndex: 0);
-                              }
-                            });
-                          },
-                        ),
-                        const Text('Linear Pacing Strategy'),
-                      ],
-                    ),
-                    if (useLinearPacing) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(() {
-                            if (pacingVariationPercent == 0) {
-                              return 'Variation: 0% (uniform pace)';
-                            }
-
-                            double halfVariation =
-                                pacingVariationPercent.abs() / 200.0;
-                            double startMultiplier, endMultiplier;
-
-                            if (pacingVariationPercent > 0) {
-                              // Positive: slow down during race (start fast, end slow)
-                              startMultiplier = 1.0 - halfVariation;
-                              endMultiplier = 1.0 + halfVariation;
-                            } else {
-                              // Negative: speed up during race (start slow, end fast)
-                              startMultiplier = 1.0 + halfVariation;
-                              endMultiplier = 1.0 - halfVariation;
-                            }
-
-                            String startPace = formatPace(
-                                selectedPaceSeconds * startMultiplier);
-                            String endPace =
-                                formatPace(selectedPaceSeconds * endMultiplier);
-                            String direction = pacingVariationPercent > 0
-                                ? 'slowing down'
-                                : 'speeding up';
-
-                            return 'Variation: ${pacingVariationPercent.toStringAsFixed(0)}% ($direction: $startPace → $endPace)';
-                          }()),
-                          Expanded(
-                            child: Slider(
-                              value: pacingVariationPercent,
-                              min: -10.0,
-                              max: 30.0,
-                              divisions: 40,
-                              label:
-                                  '${pacingVariationPercent.toStringAsFixed(0)}%',
-                              onChanged: (value) {
-                                setState(() {
-                                  pacingVariationPercent = value;
-                                  calculateTimePoints();
-                                  if (checkpoints.isNotEmpty) {
-                                    _calculateCheckpointMetrics(startIndex: 0);
-                                  }
-                                });
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -2138,6 +2223,118 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           ),
                                         ],
 
+                                        // Linear Pacing Strategy Controls
+                                        const SizedBox(height: 16),
+                                        Row(
+                                          children: [
+                                            Checkbox(
+                                              value: useLinearPacing,
+                                              onChanged: (value) {
+                                                setState(() {
+                                                  useLinearPacing =
+                                                      value ?? false;
+                                                  calculateTimePoints();
+                                                  if (checkpoints.isNotEmpty) {
+                                                    _calculateCheckpointMetrics(
+                                                        startIndex: 0);
+                                                  }
+                                                });
+                                              },
+                                            ),
+                                            const Text(
+                                                'Linear Pacing Strategy'),
+                                          ],
+                                        ),
+                                        if (useLinearPacing) ...[
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(() {
+                                                  if (pacingVariationPercent ==
+                                                      0) {
+                                                    return 'Variation: 0% (uniform pace)';
+                                                  }
+
+                                                  double halfVariation =
+                                                      pacingVariationPercent
+                                                              .abs() /
+                                                          200.0;
+                                                  double startMultiplier,
+                                                      endMultiplier;
+
+                                                  if (pacingVariationPercent >
+                                                      0) {
+                                                    // Positive: slow down during race (start fast, end slow)
+                                                    startMultiplier =
+                                                        1.0 - halfVariation;
+                                                    endMultiplier =
+                                                        1.0 + halfVariation;
+                                                  } else {
+                                                    // Negative: speed up during race (start slow, end fast)
+                                                    startMultiplier =
+                                                        1.0 + halfVariation;
+                                                    endMultiplier =
+                                                        1.0 - halfVariation;
+                                                  }
+
+                                                  String startPace = formatPace(
+                                                      selectedPaceSeconds *
+                                                          startMultiplier);
+                                                  String endPace = formatPace(
+                                                      selectedPaceSeconds *
+                                                          endMultiplier);
+                                                  String direction =
+                                                      pacingVariationPercent > 0
+                                                          ? 'slowing down'
+                                                          : 'speeding up';
+
+                                                  return 'Variation: ${pacingVariationPercent.toStringAsFixed(0)}% ($direction: $startPace → $endPace)';
+                                                }()),
+                                              ),
+                                            ],
+                                          ),
+                                          Slider(
+                                            value: pacingVariationPercent,
+                                            min: -10.0,
+                                            max: 30.0,
+                                            divisions: 40,
+                                            label:
+                                                '${pacingVariationPercent.toStringAsFixed(0)}%',
+                                            onChanged: (value) {
+                                              setState(() {
+                                                pacingVariationPercent = value;
+                                                calculateTimePoints();
+                                                if (checkpoints.isNotEmpty) {
+                                                  _calculateCheckpointMetrics(
+                                                      startIndex: 0);
+                                                }
+                                              });
+                                            },
+                                          ),
+                                        ],
+
+                                        // Reset manual adjustments button
+                                        const SizedBox(height: 16),
+                                        ElevatedButton.icon(
+                                          onPressed: () {
+                                            setState(() {
+                                              resetAllManualAdjustments();
+                                            });
+                                          },
+                                          icon: const Icon(Icons.refresh),
+                                          label: const Text(
+                                              'Reset Manual Adjustments'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor:
+                                                Colors.orange.shade100,
+                                            foregroundColor:
+                                                Colors.orange.shade800,
+                                          ),
+                                        ),
+
+                                        const SizedBox(height: 16),
+
                                         // Carbs per hour control
                                         Row(
                                           mainAxisSize: MainAxisSize.min,
@@ -2798,10 +2995,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                           Icons.remove,
                                                           size: 20),
                                                       onPressed: () {
-                                                        setState(() {
-                                                          checkpoint
-                                                              .adjustmentFactor -= 5;
-                                                        });
+                                                        double newAdjustment =
+                                                            checkpoint
+                                                                    .adjustmentFactor -
+                                                                adjustmentIncrement;
+
+                                                        // Validate the adjustment is within limits
+                                                        if (newAdjustment >=
+                                                            -maxAdjustmentSeconds) {
+                                                          setState(() {
+                                                            checkpoint
+                                                                    .adjustmentFactor =
+                                                                newAdjustment;
+
+                                                            calculateTimePoints();
+
+                                                            // Redistribute time to maintain overall pace consistency
+                                                            redistributeAdjustmentTime(
+                                                                checkpoints.indexOf(
+                                                                    checkpoint),
+                                                                adjustmentIncrement);
+
+                                                            // Recalculate with redistribution applied
+                                                            calculateTimePoints();
+
+                                                            if (checkpoints
+                                                                .isNotEmpty) {
+                                                              _calculateCheckpointMetrics(
+                                                                  startIndex:
+                                                                      0);
+                                                            }
+                                                          });
+                                                        }
                                                       },
                                                       padding: EdgeInsets.zero,
                                                     ),
@@ -2818,10 +3043,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                           Icons.add,
                                                           size: 20),
                                                       onPressed: () {
-                                                        setState(() {
-                                                          checkpoint
-                                                              .adjustmentFactor += 5;
-                                                        });
+                                                        double newAdjustment =
+                                                            checkpoint
+                                                                    .adjustmentFactor +
+                                                                adjustmentIncrement;
+
+                                                        // Validate the adjustment is within limits
+                                                        if (newAdjustment <=
+                                                            maxAdjustmentSeconds) {
+                                                          setState(() {
+                                                            checkpoint
+                                                                    .adjustmentFactor =
+                                                                newAdjustment;
+
+                                                            calculateTimePoints();
+
+                                                            // Redistribute time to maintain overall pace consistency
+                                                            redistributeAdjustmentTime(
+                                                                checkpoints.indexOf(
+                                                                    checkpoint),
+                                                                adjustmentIncrement);
+
+                                                            // Recalculate with redistribution applied
+                                                            calculateTimePoints();
+
+                                                            if (checkpoints
+                                                                .isNotEmpty) {
+                                                              _calculateCheckpointMetrics(
+                                                                  startIndex:
+                                                                      0);
+                                                            }
+                                                          });
+                                                        }
                                                       },
                                                       padding: EdgeInsets.zero,
                                                     ),
@@ -2901,28 +3154,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     int hours = totalMinutes ~/ 60;
     int minutes = totalMinutes.round() % 60;
     return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-  }
-
-  String _getTimeAtDistance(double distance) {
-    if (timePoints.isEmpty) return 'N/A';
-
-    // Find the closest time point to the given distance
-    FlSpot? closestTimePoint;
-    double minDist = double.infinity;
-
-    for (var point in timePoints) {
-      double dist = (point.x - distance).abs();
-      if (dist < minDist) {
-        minDist = dist;
-        closestTimePoint = point;
-      }
-    }
-
-    if (closestTimePoint != null) {
-      return _formatTotalTime(closestTimePoint.y);
-    }
-
-    return 'N/A';
   }
 
   int _findRoutePointIndexForDistance(double distance) {
@@ -4259,18 +4490,42 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length)
       return 'N/A';
 
-    double segmentDistance = _getSegmentDistance(checkpointIndex);
-    if (segmentDistance <= 0) return 'N/A';
+    // Get the pace from pacing vector (includes all adjustments: base + linear + manual)
+    double checkpointDistance = checkpoints[checkpointIndex].distance;
 
-    double segmentTime = checkpoints[checkpointIndex].timeFromPrevious;
-    if (segmentTime <= 0) return 'N/A';
+    // Find corresponding elevation point index for this checkpoint
+    int elevationPointIndex = -1;
+    for (int i = 0; i < elevationPoints.length; i++) {
+      if (elevationPoints[i].x >= checkpointDistance) {
+        elevationPointIndex = i;
+        break;
+      }
+    }
 
-    // Calculate pace in seconds per km
-    double paceSeconds = (segmentTime * 60) / segmentDistance;
+    double basePaceSeconds;
+    if (elevationPointIndex >= 0 && elevationPointIndex < pacingVector.length) {
+      // Use pace from pacing vector (includes manual adjustments)
+      basePaceSeconds = pacingVector[elevationPointIndex];
+    } else {
+      // Fallback: calculate from time and distance
+      double segmentDistance = _getSegmentDistance(checkpointIndex);
+      if (segmentDistance <= 0) return 'N/A';
+      double segmentTime = checkpoints[checkpointIndex].timeFromPrevious;
+      if (segmentTime <= 0) return 'N/A';
+      basePaceSeconds = (segmentTime * 60) / segmentDistance;
+    }
+
+    // Apply grade adjustment for final displayed pace
+    if (elevationPointIndex >= 0 &&
+        elevationPointIndex < smoothedGradients.length) {
+      double gradeAdjustment =
+          calculateGradeAdjustment(smoothedGradients[elevationPointIndex]);
+      basePaceSeconds = basePaceSeconds * gradeAdjustment;
+    }
 
     // Format pace as MM:SS
-    int minutes = (paceSeconds / 60).floor();
-    int seconds = (paceSeconds % 60).round();
+    int minutes = (basePaceSeconds / 60).floor();
+    int seconds = (basePaceSeconds % 60).round();
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
@@ -4345,23 +4600,5 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     setState(() {
       checkpoints = updatedCheckpoints;
     });
-  }
-
-  // Function to parse time string to hours
-  double _parseTimeToHours(String timeStr) {
-    int hours = 0;
-    int minutes = 0;
-
-    if (timeStr.contains('h')) {
-      final parts = timeStr.split('h');
-      hours = int.parse(parts[0]);
-      if (parts.length > 1 && parts[1].contains('m')) {
-        minutes = int.parse(parts[1].replaceAll('m', ''));
-      }
-    } else if (timeStr.contains('m')) {
-      minutes = int.parse(timeStr.replaceAll('m', ''));
-    }
-
-    return hours + (minutes / 60.0);
   }
 }
