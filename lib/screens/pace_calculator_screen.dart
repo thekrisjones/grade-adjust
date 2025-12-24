@@ -3,6 +3,75 @@ import 'dart:math' show pow;
 
 enum PaceUnit { minPerKm, minPerMile, kph, mph }
 
+// Data class for treadmill session rows
+class TreadmillSessionRow {
+  String timeMinutes;
+  String timeSeconds;
+  String pace;
+  String gradient;
+
+  TreadmillSessionRow({
+    this.timeMinutes = '',
+    this.timeSeconds = '',
+    this.pace = '',
+    this.gradient = '0.0',
+  });
+
+  // Get total time in minutes
+  double getTotalMinutes() {
+    double mins = double.tryParse(timeMinutes) ?? 0.0;
+    double secs = double.tryParse(timeSeconds) ?? 0.0;
+    return mins + (secs / 60.0);
+  }
+
+  // Get time as mm:ss string
+  String getTimeString() {
+    if (timeMinutes.isEmpty && timeSeconds.isEmpty) return '';
+    String mins = timeMinutes.padLeft(2, '0');
+    String secs = timeSeconds.padLeft(2, '0');
+    return '$mins:$secs';
+  }
+
+  // Get pace in seconds per km (always store internally as seconds per km)
+  double getPaceSecondsPerKm() {
+    return double.tryParse(pace) ?? 0.0;
+  }
+
+  // Convert pace value based on selected unit to seconds per km for calculations
+  double getPaceSecondsPerKmFromUnit(PaceUnit unit) {
+    switch (unit) {
+      case PaceUnit.minPerKm:
+      case PaceUnit.minPerMile:
+        // Parse mm:ss format
+        if (pace.contains(':')) {
+          List<String> parts = pace.split(':');
+          if (parts.length == 2) {
+            int minutes = int.tryParse(parts[0]) ?? 0;
+            int seconds = int.tryParse(parts[1]) ?? 0;
+            double totalSeconds = (minutes * 60.0) + seconds.toDouble();
+            if (unit == PaceUnit.minPerMile) {
+              totalSeconds =
+                  totalSeconds / 1.609344; // Convert mile pace to km pace
+            }
+            return totalSeconds;
+          }
+        }
+        return 0.0;
+      case PaceUnit.kph:
+        double speedValue = double.tryParse(pace) ?? 0.0;
+        return speedValue > 0 ? 3600.0 / speedValue : 0.0;
+      case PaceUnit.mph:
+        double speedValue = double.tryParse(pace) ?? 0.0;
+        return speedValue > 0 ? 3600.0 / (speedValue * 1.609344) : 0.0;
+    }
+  }
+
+  // Get gradient as percentage
+  double getGradientPercent() {
+    return double.tryParse(gradient) ?? 0.0;
+  }
+}
+
 class PaceCalculatorScreen extends StatefulWidget {
   const PaceCalculatorScreen({super.key});
 
@@ -15,6 +84,154 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
   double realPaceSeconds = 300.0; // 5:00 min/km
   double gradeAdjustedPaceSeconds = 300.0; // Will be calculated
   PaceUnit selectedUnit = PaceUnit.minPerKm;
+
+  // Treadmill session table data
+  List<TreadmillSessionRow> treadmillRows = [TreadmillSessionRow()];
+
+  // Controllers for treadmill table cells
+  List<List<TextEditingController>> treadmillControllers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeTreadmillControllers();
+  }
+
+  @override
+  void dispose() {
+    _disposeTreadmillControllers();
+    super.dispose();
+  }
+
+  void _initializeTreadmillControllers() {
+    treadmillControllers.clear();
+    for (int i = 0; i < treadmillRows.length; i++) {
+      treadmillControllers.add([
+        TextEditingController(text: treadmillRows[i].getTimeString()),
+        TextEditingController(text: treadmillRows[i].pace),
+        TextEditingController(text: treadmillRows[i].gradient),
+      ]);
+    }
+  }
+
+  void _disposeTreadmillControllers() {
+    for (var controllerGroup in treadmillControllers) {
+      for (var controller in controllerGroup) {
+        controller.dispose();
+      }
+    }
+  }
+
+  void _addTreadmillRow() {
+    setState(() {
+      treadmillRows.add(TreadmillSessionRow());
+      treadmillControllers.add([
+        TextEditingController(),
+        TextEditingController(),
+        TextEditingController(text: '0.0'),
+      ]);
+    });
+  }
+
+  void _deleteTreadmillRow(int index) {
+    if (treadmillRows.length > 1) {
+      setState(() {
+        // Dispose controllers for this row
+        for (var controller in treadmillControllers[index]) {
+          controller.dispose();
+        }
+
+        treadmillRows.removeAt(index);
+        treadmillControllers.removeAt(index);
+      });
+    }
+  }
+
+  void _updateTreadmillRow(int rowIndex, int fieldIndex, String value) {
+    setState(() {
+      switch (fieldIndex) {
+        case 0:
+          // Parse mm:ss format and update timeMinutes/timeSeconds
+          if (value.contains(':')) {
+            List<String> parts = value.split(':');
+            if (parts.length == 2) {
+              treadmillRows[rowIndex].timeMinutes = parts[0];
+              treadmillRows[rowIndex].timeSeconds = parts[1];
+            }
+          } else {
+            // If no colon, treat as minutes only
+            treadmillRows[rowIndex].timeMinutes = value;
+            treadmillRows[rowIndex].timeSeconds = '0';
+          }
+          break;
+        case 1:
+          treadmillRows[rowIndex].pace = value;
+          break;
+        case 2:
+          treadmillRows[rowIndex].gradient = value;
+          break;
+      }
+    });
+  }
+
+  double _calculateTotalDistance() {
+    double totalDistance = 0.0;
+    for (var row in treadmillRows) {
+      double timeInMinutes = row.getTotalMinutes();
+      double paceSecondsPerKm = row.getPaceSecondsPerKmFromUnit(selectedUnit);
+
+      if (timeInMinutes > 0 && paceSecondsPerKm > 0) {
+        double timeInHours = timeInMinutes / 60.0;
+        double speedKmPerHour = 3600.0 / paceSecondsPerKm;
+        totalDistance += speedKmPerHour * timeInHours;
+      }
+    }
+    return totalDistance;
+  }
+
+  double _calculateTotalClimb() {
+    double totalClimb = 0.0;
+    for (var row in treadmillRows) {
+      double timeInMinutes = row.getTotalMinutes();
+      double paceSecondsPerKm = row.getPaceSecondsPerKmFromUnit(selectedUnit);
+      double gradientPercent = row.getGradientPercent();
+
+      if (timeInMinutes > 0 && paceSecondsPerKm > 0 && gradientPercent > 0) {
+        double timeInHours = timeInMinutes / 60.0;
+        double speedKmPerHour = 3600.0 / paceSecondsPerKm;
+        double distanceKm = speedKmPerHour * timeInHours;
+        double climbMeters = (distanceKm * 1000.0 * gradientPercent) / 100.0;
+        totalClimb += climbMeters;
+      }
+    }
+    return totalClimb;
+  }
+
+  String getPaceColumnHeader() {
+    switch (selectedUnit) {
+      case PaceUnit.minPerKm:
+        return 'Pace\n(min/km)';
+      case PaceUnit.minPerMile:
+        return 'Pace\n(min/mi)';
+      case PaceUnit.kph:
+        return 'Speed\n(km/h)';
+      case PaceUnit.mph:
+        return 'Speed\n(mph)';
+    }
+  }
+
+  String getPaceHintText() {
+    switch (selectedUnit) {
+      case PaceUnit.minPerKm:
+        return '5:00';
+      case PaceUnit.minPerMile:
+        return '8:00';
+      case PaceUnit.kph:
+        return '12.0';
+      case PaceUnit.mph:
+        return '7.5';
+    }
+  }
 
   // Conversion constants
   static const double kmToMiles = 0.621371;
@@ -705,6 +922,236 @@ class _PaceCalculatorScreenState extends State<PaceCalculatorScreen> {
                         ? 'ft/h'
                         : 'm/h',
                     context: context,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Treadmill Session Calculator
+              Text(
+                'Treadmill Session Calculator',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 12),
+
+              // Treadmill Table
+              Card(
+                elevation: 2,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Wrap the table structure in a horizontal scroll view (matching route analyzer)
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(minWidth: 600),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Table header (matching route analyzer styling)
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(8),
+                                    topRight: Radius.circular(8),
+                                  ),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 12, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 120,
+                                      child: Text(
+                                        'Time\n(mm:ss)',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 120,
+                                      child: Text(
+                                        getPaceColumnHeader(),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 120,
+                                      child: Text(
+                                        'Gradient\n(%)',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 80,
+                                      child: Text(
+                                        'Actions',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Table rows (matching route analyzer styling)
+                              ...List.generate(treadmillRows.length, (index) {
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: index % 2 == 0
+                                        ? Colors.white
+                                        : Colors.grey.shade50,
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: Colors.grey.shade300,
+                                        width: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 8, horizontal: 8),
+                                  child: Row(
+                                    children: [
+                                      // Time input (mm:ss)
+                                      SizedBox(
+                                        width: 120,
+                                        child: TextField(
+                                          controller:
+                                              treadmillControllers[index][0],
+                                          decoration: const InputDecoration(
+                                            hintText: '10:30',
+                                            border: OutlineInputBorder(),
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                    horizontal: 8, vertical: 4),
+                                          ),
+                                          keyboardType: TextInputType.text,
+                                          onChanged: (value) =>
+                                              _updateTreadmillRow(
+                                                  index, 0, value),
+                                        ),
+                                      ),
+
+                                      // Pace input
+                                      SizedBox(
+                                        width: 120,
+                                        child: TextField(
+                                          controller:
+                                              treadmillControllers[index][1],
+                                          decoration: InputDecoration(
+                                            hintText: getPaceHintText(),
+                                            border: const OutlineInputBorder(),
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 8, vertical: 4),
+                                          ),
+                                          keyboardType: TextInputType.text,
+                                          onChanged: (value) =>
+                                              _updateTreadmillRow(
+                                                  index, 1, value),
+                                        ),
+                                      ),
+
+                                      // Gradient input
+                                      SizedBox(
+                                        width: 120,
+                                        child: TextField(
+                                          controller:
+                                              treadmillControllers[index][2],
+                                          decoration: const InputDecoration(
+                                            hintText: '0.0',
+                                            border: OutlineInputBorder(),
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                    horizontal: 8, vertical: 4),
+                                          ),
+                                          keyboardType: TextInputType.number,
+                                          onChanged: (value) =>
+                                              _updateTreadmillRow(
+                                                  index, 2, value),
+                                        ),
+                                      ),
+
+                                      // Delete button
+                                      SizedBox(
+                                        width: 80,
+                                        child: IconButton(
+                                          onPressed: treadmillRows.length > 1
+                                              ? () => _deleteTreadmillRow(index)
+                                              : null,
+                                          icon: const Icon(Icons.delete),
+                                          iconSize: 20,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // Add Row Button
+                      ElevatedButton.icon(
+                        onPressed: _addTreadmillRow,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Row'),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Summary Results
+                      const Divider(),
+                      Text(
+                        'Session Summary',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+
+                      _buildResultRow(
+                        icon: Icons.straighten,
+                        label: 'Total Distance',
+                        value: _calculateTotalDistance().toStringAsFixed(2),
+                        unit: 'km',
+                        context: context,
+                      ),
+
+                      _buildResultRow(
+                        icon: Icons.trending_up,
+                        label: 'Total Climb',
+                        value: _calculateTotalClimb().toStringAsFixed(0),
+                        unit: 'm',
+                        context: context,
+                      ),
+                    ],
                   ),
                 ),
               ),
