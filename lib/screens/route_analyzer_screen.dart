@@ -322,10 +322,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       checkpoint.adjustmentFactor = 0;
     }
     // Recalculate without manual adjustments
-    calculateTimePoints();
-    if (checkpoints.isNotEmpty) {
-      _calculateCheckpointMetrics(startIndex: 0);
-    }
+    _recalculatePacingAndCheckpoints();
   }
 
   void calculateTimePoints() {
@@ -352,6 +349,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     }
 
     // First, calculate the base grade-adjusted pace for each segment
+    // Note: These values will be overridden in _calculateCheckpointMetrics
+    // but are needed for time calculation
     if (checkpoints.isNotEmpty) {
       // Calculate for start to first checkpoint
       checkpoints[0].baseGradeAdjustedPace =
@@ -847,6 +846,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         // Add the checkpoint
         checkpoints.add(finishCheckpoint);
 
+        // Update checkpoint metrics for initial data
+        _calculateCheckpointMetrics(startIndex: 0);
+
         // Add new focus nodes for this checkpoint - with web platform handling
         final nameNode = FocusNode();
         final distanceNode = FocusNode();
@@ -1225,11 +1227,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             onChanged: (value) {
                               setState(() {
                                 selectedPaceSeconds = value;
-                                calculateTimePoints();
-                                // Recalculate all checkpoint metrics when pace changes
-                                if (checkpoints.isNotEmpty) {
-                                  _calculateCheckpointMetrics(startIndex: 0);
-                                }
+                                _recalculatePacingAndCheckpoints();
                               });
                             },
                           ),
@@ -1246,11 +1244,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               // Decrease by 5 seconds, but not below minimum
                               selectedPaceSeconds =
                                   max(minPaceSeconds, selectedPaceSeconds - 5);
-                              calculateTimePoints();
-                              // Recalculate all checkpoint metrics
-                              if (checkpoints.isNotEmpty) {
-                                _calculateCheckpointMetrics(startIndex: 0);
-                              }
+                              _recalculatePacingAndCheckpoints();
                             });
                           },
                           style: ElevatedButton.styleFrom(
@@ -1268,11 +1262,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               // Decrease by 1 second, but not below minimum
                               selectedPaceSeconds =
                                   max(minPaceSeconds, selectedPaceSeconds - 1);
-                              calculateTimePoints();
-                              // Recalculate all checkpoint metrics
-                              if (checkpoints.isNotEmpty) {
-                                _calculateCheckpointMetrics(startIndex: 0);
-                              }
+                              _recalculatePacingAndCheckpoints();
                             });
                           },
                           style: ElevatedButton.styleFrom(
@@ -1290,11 +1280,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               // Increase by 1 second, but not above maximum
                               selectedPaceSeconds =
                                   min(maxPaceSeconds, selectedPaceSeconds + 1);
-                              calculateTimePoints();
-                              // Recalculate all checkpoint metrics
-                              if (checkpoints.isNotEmpty) {
-                                _calculateCheckpointMetrics(startIndex: 0);
-                              }
+                              _recalculatePacingAndCheckpoints();
                             });
                           },
                           style: ElevatedButton.styleFrom(
@@ -1312,11 +1298,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                               // Increase by 5 seconds, but not above maximum
                               selectedPaceSeconds =
                                   min(maxPaceSeconds, selectedPaceSeconds + 5);
-                              calculateTimePoints();
-                              // Recalculate all checkpoint metrics
-                              if (checkpoints.isNotEmpty) {
-                                _calculateCheckpointMetrics(startIndex: 0);
-                              }
+                              _recalculatePacingAndCheckpoints();
                             });
                           },
                           style: ElevatedButton.styleFrom(
@@ -2233,11 +2215,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 setState(() {
                                                   useLinearPacing =
                                                       value ?? false;
-                                                  calculateTimePoints();
-                                                  if (checkpoints.isNotEmpty) {
-                                                    _calculateCheckpointMetrics(
-                                                        startIndex: 0);
-                                                  }
+                                                  _recalculatePacingAndCheckpoints();
                                                 });
                                               },
                                             ),
@@ -2304,11 +2282,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                             onChanged: (value) {
                                               setState(() {
                                                 pacingVariationPercent = value;
-                                                calculateTimePoints();
-                                                if (checkpoints.isNotEmpty) {
-                                                  _calculateCheckpointMetrics(
-                                                      startIndex: 0);
-                                                }
+                                                _recalculatePacingAndCheckpoints();
                                               });
                                             },
                                           ),
@@ -3390,6 +3364,24 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     });
   }
 
+  /// Comprehensive recalculation of pacing and checkpoint data
+  /// Call this whenever pacing parameters change to ensure consistency
+  void _recalculatePacingAndCheckpoints() {
+    // Step 1: Regenerate linear pacing multipliers
+    generateLinearPacingMultipliers();
+
+    // Step 2: Update the unified pacing vector
+    updatePacingVector();
+
+    // Step 3: Recalculate time points based on updated pacing
+    calculateTimePoints();
+
+    // Step 4: Update checkpoint metrics
+    if (checkpoints.isNotEmpty) {
+      _calculateCheckpointMetrics(startIndex: 0);
+    }
+  }
+
   // Calculate metrics for all checkpoints
   void _calculateCheckpointMetrics({int startIndex = 0}) {
     if (elevationPoints.isEmpty || timePoints.isEmpty) return;
@@ -3409,15 +3401,14 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         checkpoint.distance = min(checkpoint.distance, elevationPoints.last.x);
       }
 
-      // Calculate base grade adjusted pace for this segment if not already done
+      // Always recalculate base grade adjusted pace when pacing parameters change
       double startDistance = 0;
       if (i > 0) {
         startDistance = checkpoints[i - 1].distance;
       }
-      if (checkpoint.baseGradeAdjustedPace <= 0) {
-        checkpoint.baseGradeAdjustedPace =
-            getSegmentBaseGradeAdjustedPace(startDistance, checkpoint.distance);
-      }
+      // Recalculate the base grade adjusted pace to reflect current pacing settings
+      checkpoint.baseGradeAdjustedPace =
+          getSegmentBaseGradeAdjustedPace(startDistance, checkpoint.distance);
 
       // Calculate grade adjusted distance for this segment
       checkpoint.gradeAdjustedDistance =
@@ -4490,42 +4481,19 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length)
       return 'N/A';
 
-    // Get the pace from pacing vector (includes all adjustments: base + linear + manual)
-    double checkpointDistance = checkpoints[checkpointIndex].distance;
+    // Calculate actual segment pace as segment time / segment distance
+    double segmentDistance = _getSegmentDistance(checkpointIndex);
+    if (segmentDistance <= 0) return 'N/A';
 
-    // Find corresponding elevation point index for this checkpoint
-    int elevationPointIndex = -1;
-    for (int i = 0; i < elevationPoints.length; i++) {
-      if (elevationPoints[i].x >= checkpointDistance) {
-        elevationPointIndex = i;
-        break;
-      }
-    }
+    double segmentTime = checkpoints[checkpointIndex].timeFromPrevious;
+    if (segmentTime <= 0) return 'N/A';
 
-    double basePaceSeconds;
-    if (elevationPointIndex >= 0 && elevationPointIndex < pacingVector.length) {
-      // Use pace from pacing vector (includes manual adjustments)
-      basePaceSeconds = pacingVector[elevationPointIndex];
-    } else {
-      // Fallback: calculate from time and distance
-      double segmentDistance = _getSegmentDistance(checkpointIndex);
-      if (segmentDistance <= 0) return 'N/A';
-      double segmentTime = checkpoints[checkpointIndex].timeFromPrevious;
-      if (segmentTime <= 0) return 'N/A';
-      basePaceSeconds = (segmentTime * 60) / segmentDistance;
-    }
-
-    // Apply grade adjustment for final displayed pace
-    if (elevationPointIndex >= 0 &&
-        elevationPointIndex < smoothedGradients.length) {
-      double gradeAdjustment =
-          calculateGradeAdjustment(smoothedGradients[elevationPointIndex]);
-      basePaceSeconds = basePaceSeconds * gradeAdjustment;
-    }
+    // Calculate pace in seconds per kilometer
+    double paceSecondsPerKm = (segmentTime * 60) / segmentDistance;
 
     // Format pace as MM:SS
-    int minutes = (basePaceSeconds / 60).floor();
-    int seconds = (basePaceSeconds % 60).round();
+    int minutes = (paceSecondsPerKm / 60).floor();
+    int seconds = (paceSecondsPerKm % 60).round();
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
