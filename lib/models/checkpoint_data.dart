@@ -5,6 +5,7 @@ class CheckpointData {
   double elevationLoss = 0;
   double cumulativeTime = 0;
   double timeFromPrevious = 0;
+  double pauseSeconds = 0;
   String id =
       DateTime.now().millisecondsSinceEpoch.toString(); // Unique identifier
   String? name;
@@ -32,6 +33,7 @@ class CheckpointData {
     cp.elevationLoss = elevationLoss;
     cp.cumulativeTime = cumulativeTime;
     cp.timeFromPrevious = timeFromPrevious;
+    cp.pauseSeconds = pauseSeconds;
     cp.id = id;
     cp.name = name;
     cp.baseGradeAdjustedPace = baseGradeAdjustedPace;

@@ -73,11 +73,47 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   final List<FocusNode> _distanceFocusNodes = [];
   // Add a flag to prevent web-related focus errors
   final bool _isWeb = kIsWeb;
+  bool useImperialUnits = false;
+
+  static const double _kilometersPerMile = 1.609344;
+  static const double _metersPerFoot = 3.28084;
+  static const double _milesPerKilometer = 0.621371;
+
+  String get distanceUnitLabel => useImperialUnits ? 'mi' : 'km';
+  String get elevationUnitLabel => useImperialUnits ? 'ft' : 'm';
+
+  double convertDistanceToDisplay(double kilometers) {
+    return useImperialUnits ? kilometers * _milesPerKilometer : kilometers;
+  }
+
+  double convertElevationToDisplay(double meters) {
+    return useImperialUnits ? meters * _metersPerFoot : meters;
+  }
+
+  double convertDistanceFromDisplay(double value) {
+    return useImperialUnits ? value / _milesPerKilometer : value;
+  }
+
+  double convertPaceToDisplayUnit(double secondsPerKilometer) {
+    return useImperialUnits ? secondsPerKilometer * _kilometersPerMile : secondsPerKilometer;
+  }
+
+  String formatDistanceValue(double kilometers, {int decimals = 1}) {
+    return '${convertDistanceToDisplay(kilometers).toStringAsFixed(decimals)} $distanceUnitLabel';
+  }
+
+  String formatElevationValue(double meters, {int decimals = 0}) {
+    return '${convertElevationToDisplay(meters).toStringAsFixed(decimals)} $elevationUnitLabel';
+  }
+
+  String formatPaceForDisplay(double secondsPerKilometer) {
+    return formatPace(convertPaceToDisplayUnit(secondsPerKilometer));
+  }
 
   // Pace-related state
   double selectedPaceSeconds = 240; // Default 4:00 (240 seconds)
   static const double minPaceSeconds = 165; // 2:45
-  static const double maxPaceSeconds = 900; // 15:00
+  static const double maxPaceSeconds = 1200; // 20:00
   // Add minimum allowed segment pace (2:00 min/km)
   static const double minSegmentPace = 120; // 2:00 min/km
 
@@ -1204,9 +1240,35 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         child: Column(
           children: [
             Center(
-              child: ElevatedButton(
-                onPressed: pickGPXFile,
-                child: const Text('Upload GPX File'),
+              child: Column(
+                children: [
+                  ElevatedButton(
+                    onPressed: pickGPXFile,
+                    child: const Text('Upload GPX File'),
+                  ),
+                  const SizedBox(height: 8),
+                  ToggleButtons(
+                    isSelected: [!useImperialUnits, useImperialUnits],
+                    onPressed: (index) {
+                      setState(() {
+                        useImperialUnits = index == 1;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(8),
+                    selectedBorderColor: Theme.of(context).primaryColor,
+                    selectedColor: Colors.white,
+                    fillColor: Theme.of(context).primaryColor,
+                    color: Colors.black87,
+                    constraints: const BoxConstraints(
+                      minHeight: 36,
+                      minWidth: 88,
+                    ),
+                    children: const [
+                      Text('km / m'),
+                      Text('mi / ft'),
+                    ],
+                  ),
+                ],
               ),
             ),
             if (routePoints.isNotEmpty) ...[
@@ -1218,7 +1280,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     Row(
                       children: [
                         Text(
-                            'Grade Adjusted Pace: ${formatPace(selectedPaceSeconds)}/km'),
+                            'Grade Adjusted Pace: ${formatPaceForDisplay(selectedPaceSeconds)}/$distanceUnitLabel'),
                         Expanded(
                           child: Slider(
                             value: selectedPaceSeconds,
@@ -1235,8 +1297,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       ],
                     ),
                     // Fine-tuning buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
                         ElevatedButton(
                           onPressed: () {
@@ -1255,7 +1319,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           child:
                               const Text('-5s', style: TextStyle(fontSize: 14)),
                         ),
-                        const SizedBox(width: 8),
                         ElevatedButton(
                           onPressed: () {
                             setState(() {
@@ -1273,7 +1336,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           child:
                               const Text('-1s', style: TextStyle(fontSize: 14)),
                         ),
-                        const SizedBox(width: 16),
                         ElevatedButton(
                           onPressed: () {
                             setState(() {
@@ -1291,7 +1353,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           child:
                               const Text('+1s', style: TextStyle(fontSize: 14)),
                         ),
-                        const SizedBox(width: 8),
                         ElevatedButton(
                           onPressed: () {
                             setState(() {
@@ -1315,7 +1376,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
                         child: Text(
-                          'Estimated Total Time: ${_formatTotalTime(timePoints.last.y)}',
+                          'Estimated Total Time: ${_formatTotalTime(_estimatedTotalTimeMinutes)}',
                           style:
                               Theme.of(context).textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.bold,
@@ -1344,9 +1405,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                   ),
                   // Map container
                   if (showMap)
-                    // Map with reduced height
                     SizedBox(
-                      height: 225,
+                      height: 300,
                       child: LayoutBuilder(
                         builder: (context, constraints) {
                           // Calculate container width based on available space
@@ -1372,9 +1432,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 children: [
                                   LayoutBuilder(
                                     builder: (context, mapConstraints) {
-                                      return GestureDetector(
-                                        onTap: () => _handleTapForCheckpoint(),
-                                        child: MouseRegion(
+                                      return MouseRegion(
                                           cursor: hoveredDistance != null
                                               ? SystemMouseCursors.click
                                               : SystemMouseCursors.basic,
@@ -1470,6 +1528,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                           child: FlutterMap(
                                             mapController: mapController,
                                             options: MapOptions(
+                                              onTap: (tapPosition, point) {
+                                                _handleMapTap(point);
+                                              },
                                               initialCameraFit:
                                                   CameraFit.bounds(
                                                 bounds: LatLngBounds.fromPoints(
@@ -1577,7 +1638,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               ),
                                             ],
                                           ),
-                                        ),
                                       );
                                     },
                                   ),
@@ -1605,7 +1665,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                     // Define chart are constants
 
                     return GestureDetector(
-                      onTap: () => _handleTapForCheckpoint(),
+                      onTapUp: (details) => _handleElevationChartTap(
+                          details.localPosition, constraints),
                       child: MouseRegion(
                         cursor: hoveredDistance != null
                             ? SystemMouseCursors.click
@@ -1708,11 +1769,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                             ),
                             titlesData: FlTitlesData(
                               bottomTitles: AxisTitles(
-                                axisNameWidget: const Padding(
-                                  padding: EdgeInsets.only(top: 12.0),
+                                axisNameWidget: Padding(
+                                  padding: const EdgeInsets.only(top: 12.0),
                                   child: Text(
-                                    'Distance (km)',
-                                    style: TextStyle(
+                                    'Distance ($distanceUnitLabel)',
+                                    style: const TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
                                     ),
@@ -1725,7 +1786,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       .clamp(1, double.infinity),
                                   getTitlesWidget: (value, meta) {
                                     return Text(
-                                      value.toInt().toString(),
+                                      convertDistanceToDisplay(value).toStringAsFixed(
+                                          value < 1 ? 1 : 0),
                                       style: const TextStyle(
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold,
@@ -1740,19 +1802,21 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 sideTitles: SideTitles(
                                   showTitles: true,
                                   reservedSize: 40,
-                                  interval: 200, // Fixed 200m intervals
+                                  interval: useImperialUnits ? 650 : 200,
                                   getTitlesWidget: (value, meta) {
-                                    // Only show labels at even 200m intervals
-                                    if (value % 200 != 0) {
+                                    // Only show labels at even intervals for the selected elevation unit
+                                    double intervalValue = useImperialUnits ? 650.0 : 200.0;
+                                    if ((value % intervalValue) > 0.001) {
                                       return Container();
                                     }
                                     return Padding(
                                       padding:
                                           const EdgeInsets.only(right: 8.0),
                                       child: Text(
-                                        value.toInt().toString(),
+                                        convertElevationToDisplay(value).toStringAsFixed(
+                                            useImperialUnits ? 0 : 0),
                                         style: const TextStyle(
-                                          fontSize: 10, // Same as x-axis
+                                          fontSize: 10,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
@@ -1883,56 +1947,6 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                 ),
               ),
 
-              // Add instruction for checkpoint creation if pending (MOVED HERE)
-              if (_isPendingCheckpointCreation &&
-                  _pendingCheckpointDistance != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 8.0, horizontal: 16.0),
-                  margin: const EdgeInsets.symmetric(
-                      vertical: 8.0, horizontal: 16.0), // Added vertical margin
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade100,
-                    borderRadius: BorderRadius.circular(8.0),
-                    border: Border.all(color: Colors.blue.shade300),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Add checkpoint at ${_pendingCheckpointDistance!.toStringAsFixed(2)} km?',
-                          style: const TextStyle(
-                              color: Colors.blue, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          if (mounted) {
-                            _createCheckpointAtDistance(
-                                _pendingCheckpointDistance!);
-                            setState(() {
-                              _isPendingCheckpointCreation = false;
-                              _pendingCheckpointDistance = null;
-                            });
-                          }
-                        },
-                        child: const Text('Confirm'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _isPendingCheckpointCreation = false;
-                            _pendingCheckpointDistance = null;
-                          });
-                        },
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                ),
-
               // Route Summary Section with bar charts
               if (routePoints.isNotEmpty) ...[
                 Padding(
@@ -1965,7 +1979,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Total Distance',
-                                  '${elevationPoints.isNotEmpty ? elevationPoints.last.x.toStringAsFixed(1) : "0"} km',
+                                  elevationPoints.isNotEmpty
+                                      ? formatDistanceValue(elevationPoints.last.x)
+                                      : '0 $distanceUnitLabel',
                                   Icons.straighten,
                                   Colors.blue,
                                 ),
@@ -1976,7 +1992,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Grade Adj. Distance',
-                                  '${checkpoints.isNotEmpty ? checkpoints.last.cumulativeGradeAdjustedDistance.toStringAsFixed(1) : "0"} km',
+                                  checkpoints.isNotEmpty
+                                      ? formatDistanceValue(
+                                          checkpoints.last.cumulativeGradeAdjustedDistance)
+                                      : '0 $distanceUnitLabel',
                                   Icons.terrain,
                                   Colors.purple,
                                 ),
@@ -1987,7 +2006,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Gain',
-                                  '${cumulativeElevationGain.isNotEmpty ? cumulativeElevationGain.last.toInt() : "0"} m',
+                                  cumulativeElevationGain.isNotEmpty
+                                      ? formatElevationValue(
+                                          cumulativeElevationGain.last)
+                                      : '0 $elevationUnitLabel',
                                   Icons.trending_up,
                                   Colors.green,
                                 ),
@@ -1998,7 +2020,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     : (constraints.maxWidth - 8) / 2,
                                 child: _buildStatCard(
                                   'Elevation Loss',
-                                  '${cumulativeElevationLoss.isNotEmpty ? cumulativeElevationLoss.last.toInt() : "0"} m',
+                                  cumulativeElevationLoss.isNotEmpty
+                                      ? formatElevationValue(
+                                          cumulativeElevationLoss.last)
+                                      : '0 $elevationUnitLabel',
                                   Icons.trending_down,
                                   Colors.red,
                                 ),
@@ -2010,7 +2035,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 child: _buildStatCard(
                                   'Estimated Time',
                                   timePoints.isNotEmpty
-                                      ? _formatTotalTime(timePoints.last.y)
+                                      ? _formatTotalTime(
+                                        _estimatedTotalTimeMinutes)
                                       : '0m',
                                   Icons.timer,
                                   Colors.orange,
@@ -2023,8 +2049,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                 child: _buildStatCard(
                                   'Average Pace',
                                   timePoints.isNotEmpty
-                                      ? '${formatPaceAxisLabel((timePoints.last.y * 60) / elevationPoints.last.x)} min/km'
-                                      : '0 min/km',
+                                      ? '${formatPaceAxisLabel((timePoints.last.y * 60) / elevationPoints.last.x)} min/$distanceUnitLabel'
+                                      : '0 min/$distanceUnitLabel',
                                   Icons.speed,
                                   Colors.cyan,
                                 ),
@@ -2055,7 +2081,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                           const SizedBox(height: 12),
                           // Pace distribution chart
                           _buildBarChart(
-                            'Time at Pace',
+                            'Time at Pace (min/$distanceUnitLabel)',
                             calculateRouteSummaryData()['pace'] ?? [],
                             Colors.green,
                           ),
@@ -2491,7 +2517,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Total Distance column
                                       width: 110,
                                       child: Text(
-                                        'Total Distance\n(km)',
+                                        'Total Distance\n($distanceUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2504,7 +2530,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Segment Distance column
                                       width: 110,
                                       child: Text(
-                                        'Segment Dist.\n(km)',
+                                        'Segment Dist.\n($distanceUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2517,7 +2543,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Segment Pace column
                                       width: 110,
                                       child: Text(
-                                        'Segment Pace\n(min/km)',
+                                        'Segment Pace\n(min/$distanceUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2530,7 +2556,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Grade Adj. Distance column
                                       width: 110,
                                       child: Text(
-                                        'Grade Adj. Dist.\n(km)',
+                                        'Grade Adj. Dist.\n($distanceUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2543,7 +2569,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Elevation column
                                       width: 110,
                                       child: Text(
-                                        'Elevation\n(m)',
+                                        'Elevation\n($elevationUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2556,7 +2582,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Elev. Gain column
                                       width: 110,
                                       child: Text(
-                                        'Elev. Gain\n(m)',
+                                        'Elev. Gain\n($elevationUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2569,7 +2595,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                       // Elev. Loss column
                                       width: 110,
                                       child: Text(
-                                        'Elev. Loss\n(m)',
+                                        'Elev. Loss\n($elevationUnitLabel)',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleSmall
@@ -2604,6 +2630,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                             ),
                                       ),
                                     ),
+                                        SizedBox(
+                                          width: 100,
+                                          child: Text(
+                                            'Pause (s)',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleSmall
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                          ),
+                                        ),
                                     if (carbsPerHour > 0 && gramsPerUnit > 0)
                                       SizedBox(
                                         // Carbs Units column
@@ -2743,17 +2781,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   : null,
                                               initialValue:
                                                   checkpoint.distance > 0
-                                                      ? checkpoint.distance
+                                                      ? convertDistanceToDisplay(
+                                                              checkpoint.distance)
                                                           .toStringAsFixed(1)
                                                       : '',
-                                              decoration: const InputDecoration(
+                                              decoration: InputDecoration(
                                                 isDense: true,
                                                 contentPadding:
-                                                    EdgeInsets.symmetric(
+                                                    const EdgeInsets.symmetric(
                                                         horizontal: 8,
                                                         vertical: 8),
-                                                border: OutlineInputBorder(),
-                                                hintText: 'Enter km',
+                                                border: const OutlineInputBorder(),
+                                                hintText: 'Enter $distanceUnitLabel',
                                               ),
                                               keyboardType: const TextInputType
                                                   .numberWithOptions(
@@ -2764,7 +2803,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                     double.tryParse(value);
                                                 if (distance != null) {
                                                   updateCheckpointDistance(
-                                                      index, distance);
+                                                      index,
+                                                      convertDistanceFromDisplay(
+                                                          distance));
                                                 }
                                               },
                                               onTap: () {
@@ -2799,7 +2840,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
                                               child: Text(
-                                                _getSegmentDistance(index)
+                                                convertDistanceToDisplay(
+                                                        _getSegmentDistance(index))
                                                     .toStringAsFixed(1),
                                               ),
                                             ),
@@ -2826,8 +2868,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
                                               child: Text(
-                                                checkpoint
-                                                    .cumulativeGradeAdjustedDistance
+                                                convertDistanceToDisplay(
+                                                        checkpoint
+                                                            .cumulativeGradeAdjustedDistance)
                                                     .toStringAsFixed(1),
                                               ),
                                             ),
@@ -2841,7 +2884,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
                                               child: Text(
-                                                checkpoint.elevation
+                                                convertElevationToDisplay(
+                                                        checkpoint.elevation)
                                                     .toStringAsFixed(0),
                                               ),
                                             ),
@@ -2855,7 +2899,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
                                               child: Text(
-                                                checkpoint.elevationGain
+                                                convertElevationToDisplay(
+                                                        checkpoint.elevationGain)
                                                     .toStringAsFixed(0),
                                               ),
                                             ),
@@ -2869,7 +2914,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 8),
                                               child: Text(
-                                                checkpoint.elevationLoss
+                                                convertElevationToDisplay(
+                                                        checkpoint.elevationLoss)
                                                     .toStringAsFixed(0),
                                               ),
                                             ),
@@ -2900,6 +2946,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                 _formatTotalTime(checkpoint
                                                     .timeFromPrevious),
                                               ),
+                                            ),
+                                          ),
+
+                                          // Pause at checkpoint (seconds)
+                                          SizedBox(
+                                            width: 100,
+                                            child: TextFormField(
+                                              key: ValueKey(
+                                                  'checkpoint_pause_${checkpoint.id}'),
+                                              initialValue:
+                                                  checkpoint.pauseSeconds
+                                                      .toStringAsFixed(0),
+                                              decoration: const InputDecoration(
+                                                isDense: true,
+                                                contentPadding:
+                                                    EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 8),
+                                                border: OutlineInputBorder(),
+                                                suffixText: 's',
+                                              ),
+                                              keyboardType: const TextInputType
+                                                  .numberWithOptions(
+                                                  decimal: false),
+                                              onChanged: (value) {
+                                                final pause =
+                                                    double.tryParse(value);
+                                                if (pause != null) {
+                                                  updateCheckpointPause(
+                                                      index, pause);
+                                                }
+                                              },
                                             ),
                                           ),
 
@@ -3007,7 +3085,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                     SizedBox(
                                                       width: 60,
                                                       child: Text(
-                                                        '${checkpoint.adjustmentFactor.toStringAsFixed(0)} s/km',
+                                                        '${checkpoint.adjustmentFactor.toStringAsFixed(0)} s/${distanceUnitLabel}',
                                                         textAlign:
                                                             TextAlign.center,
                                                       ),
@@ -3125,15 +3203,27 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   String _formatTotalTime(double totalMinutes) {
-    int hours = totalMinutes ~/ 60;
-    int minutes = totalMinutes.round() % 60;
-    return hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+    final totalSeconds = (totalMinutes * 60).round();
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      return '${hours}h ${minutes}m ${seconds}s';
+    }
+    return '${minutes}m ${seconds}s';
+  }
+
+  double get _estimatedTotalTimeMinutes {
+    final movingTime = timePoints.isNotEmpty ? timePoints.last.y : 0.0;
+    final pausedTime = checkpoints.fold<double>(
+      0.0,
+      (total, checkpoint) => total + max(0, checkpoint.pauseSeconds) / 60.0,
+    );
+    return movingTime + pausedTime;
   }
 
   int _findRoutePointIndexForDistance(double distance) {
-    if (elevationPoints.isEmpty || routePoints.isEmpty) return -1;
-
-    // First, find the closest elevation point to this distance
     int closestElevationIndex = -1;
     double minDist = double.infinity;
 
@@ -3317,6 +3407,22 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     });
   }
 
+  void updateCheckpointPause(int index, double pauseSeconds) {
+    if (index < 0 || index >= checkpoints.length) return;
+
+    setState(() {
+      checkpoints[index].pauseSeconds = max(0, pauseSeconds);
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+
+    if (carbsPerHour > 0 && gramsPerUnit > 0) {
+      calculateCarbsUnits();
+    }
+    if (fluidPerHour > 0 && mlPerUnit > 0) {
+      calculateFluidUnits();
+    }
+  }
+
   // Process checkpoint changes when editing is complete
   void _processCheckpointChanges() {
     setState(() {
@@ -3418,6 +3524,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     // Re-sort checkpoints by distance to ensure correct order
     checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
 
+    double accumulatedPauseMinutes = 0;
+
     // Process all checkpoints to ensure consistency
     for (int i = 0; i < checkpoints.length; i++) {
       final checkpoint = checkpoints[i];
@@ -3490,8 +3598,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         }
       }
 
-      // Set cumulative time
-      checkpoint.cumulativeTime = cumulativeTime;
+      checkpoint.pauseSeconds = max(0, checkpoint.pauseSeconds);
+      checkpoint.cumulativeTime = cumulativeTime + accumulatedPauseMinutes;
 
       // Calculate time from previous checkpoint
       if (i > 0) {
@@ -3500,6 +3608,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       } else {
         checkpoint.timeFromPrevious = checkpoint.cumulativeTime;
       }
+
+      accumulatedPauseMinutes += checkpoint.pauseSeconds / 60.0;
     }
   }
 
@@ -3510,8 +3620,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     // Convert start time to minutes since midnight
     int startMinutes = startTime!.hour * 60 + startTime!.minute;
 
-    // Add cumulative time (in minutes)
-    int totalMinutes = startMinutes + cumulativeMinutes.round();
+    final totalSeconds = startMinutes * 60 + (cumulativeMinutes * 60).round();
+    int totalMinutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
 
     // Handle overflow to next day
     bool isNextDay = false;
@@ -3526,7 +3637,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
     // Format with leading zeros
     String timeStr =
-        '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}';
+      '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
     // Add indicator if time is on the next day
     return isNextDay ? '$timeStr (+1)' : timeStr;
@@ -3559,6 +3670,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         'Elevation Loss (m)',
         'Total Time',
         'Segment Time',
+        'Pause (s)',
       ];
 
       // Add Real Time header if start time is set
@@ -3627,8 +3739,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                 .value =
             xl.TextCellValue(_formatTotalTime(checkpoint.timeFromPrevious));
 
+        sheet
+            .cell(xl.CellIndex.indexByColumnRow(
+              columnIndex: 8, rowIndex: i + 1))
+            .value = xl.DoubleCellValue(checkpoint.pauseSeconds);
+
         // Column index tracker
-        int colIndex = 8;
+        int colIndex = 9;
 
         // Real Time (if start time is set)
         if (startTime != null) {
@@ -3827,45 +3944,23 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       return result;
     }
 
-    // Define custom elevation bins (0-500, 500-1000, 1000-1500, 1500-2000, 2000-2500, 2500-3000, >3000)
-    List<String> elevationLabels = [
-      '    0 to 200m',
-      '  200 to 400m',
-      '  400 to 600m',
-      '  600 to 800m',
-      '  800 to 1000m',
-      '1000 to 1200m',
-      '1200 to 1400m',
-      '1400 to 1600m',
-      '1600 to 1800m',
-      '1800 to 2000m',
-      '2000 to 2200m',
-      '2200 to 2400m',
-      '2400 to 2600m',
-      '2600 to 2800m',
-      '2800 to 3000m',
-      '       >3000m'
-    ];
+    // Define custom elevation bins in the current display unit.
+    final double elevationBinBase = useImperialUnits ? 1000.0 : 200.0;
+    final String elevationUnit = useImperialUnits ? 'ft' : 'm';
+    List<String> elevationLabels = [];
+    List<double> elevationBreakpoints = [0];
 
-    List<double> elevationBreakpoints = [
-      0,
-      200,
-      400,
-      600,
-      800,
-      1000,
-      1200,
-      1400,
-      1600,
-      1800,
-      2000,
-      2200,
-      2400,
-      2600,
-      2800,
-      3000,
-      double.infinity
-    ];
+    for (int i = 1; i <= 16; i++) {
+      double value = elevationBinBase * i;
+      elevationBreakpoints.add(value);
+      if (i < 16) {
+        elevationLabels.add(
+          '${elevationBreakpoints[i - 1].toStringAsFixed(0)}-${value.toStringAsFixed(0)}$elevationUnit');
+      } else {
+        elevationLabels.add('>${value.toStringAsFixed(0)}$elevationUnit');
+      }
+    }
+    elevationBreakpoints.add(double.infinity);
 
     // Define custom gradient bins
     List<String> gradientLabels = [
@@ -3899,35 +3994,61 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       double.infinity
     ];
 
-// Define pace bins (30s intervals)
-    List<String> paceLabels = [
-      '         <3:00',
-      '  3:00 to 4:00',
-      '  4:00 to 5:00',
-      '  5:00 to 6:00',
-      '  6:00 to 7:00',
-      '  7:00 to 8:00',
-      '  8:00 to 9:00',
-      ' 9:00 to 10:00',
-      '10:00 to 11:00',
-      '11:00 to 12:00',
-      '        >12:00',
-    ];
+    final paceBreakpoints = useImperialUnits
+        ? <double>[
+            0,
+            270,
+            300,
+            330,
+            360,
+            390,
+            420,
+            450,
+            480,
+            510,
+            540,
+            570,
+            600,
+            630,
+            660,
+            690,
+            720,
+            750,
+            780,
+            810,
+            840,
+            870,
+            900,
+            double.infinity,
+          ]
+        : <double>[
+            0,
+            180,
+            240,
+            300,
+            360,
+            420,
+            480,
+            540,
+            600,
+            660,
+            720,
+            double.infinity,
+          ];
+    final paceLabels = <String>[];
+    String formatHistogramPace(double seconds) {
+      final minutes = (seconds / 60).floor();
+      final remainingSeconds = seconds.round() % 60;
+      return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
+    }
 
-    List<double> paceBreakpoints = [
-      0,
-      180,
-      240,
-      300,
-      360,
-      420,
-      480,
-      540,
-      600,
-      660,
-      720,
-      double.infinity
-    ];
+    paceLabels.add('<${formatHistogramPace(paceBreakpoints[1])}');
+    for (int i = 2; i < paceBreakpoints.length - 1; i++) {
+      paceLabels.add(
+        '${formatHistogramPace(paceBreakpoints[i - 1])}-${formatHistogramPace(paceBreakpoints[i])}',
+      );
+    }
+    paceLabels.add('>${formatHistogramPace(paceBreakpoints[paceBreakpoints.length - 2])}');
 
     // Initialize bins
     Map<int, double> elevationBins = {};
@@ -3955,7 +4076,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       int gradientIndex = min(i, smoothedGradients.length - 1);
       double gradientPercent =
           gradientIndex >= 0 ? smoothedGradients[gradientIndex] : 0;
-      double elevation = elevationPoints[i].y;
+      double elevation = convertElevationToDisplay(elevationPoints[i].y);
 
       // Calculate pace for this segment
       double adjustment = calculateGradeAdjustment(gradientPercent);
@@ -3991,11 +4112,12 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
       double segmentPace = pacePoints[i].y;
       double segmentTime = (segmentDistance * segmentPace) / 60;
+      double displayPace = convertPaceToDisplayUnit(segmentPace);
 
       // Add to pace bins
       for (int j = 0; j < paceBreakpoints.length - 1; j++) {
-        if (segmentPace >= paceBreakpoints[j] &&
-            segmentPace < paceBreakpoints[j + 1]) {
+        if (displayPace >= paceBreakpoints[j] &&
+          displayPace < paceBreakpoints[j + 1]) {
           paceBins[j] = (paceBins[j] ?? 0) + segmentTime;
           break;
         }
@@ -4049,9 +4171,72 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     return result;
   }
 
+  void _handleMapTap(LatLng point) {
+    final closestIndex = _findClosestRoutePointToLatLng(point);
+    if (closestIndex < 0 || elevationPoints.isEmpty || !mounted) return;
+
+    final elevationIndex = routePoints.length == elevationPoints.length
+        ? closestIndex
+        : (closestIndex * elevationPoints.length / routePoints.length)
+            .round()
+            .clamp(0, elevationPoints.length - 1);
+    final distance = elevationPoints[elevationIndex].x;
+
+    setState(() {
+      hoveredPointIndex = closestIndex;
+      _closestElevationPointIndex = elevationIndex;
+      hoveredDistance = distance;
+      hoveredSpot = elevationPoints[elevationIndex];
+    });
+    _handleTapForCheckpoint(distance: distance);
+  }
+
+  void _handleElevationChartTap(
+      Offset localPosition, BoxConstraints constraints) {
+    if (elevationPoints.isEmpty || !mounted) return;
+
+    const leftOffset = 56.0;
+    final chartAreaWidth = constraints.maxWidth - leftOffset;
+    if (chartAreaWidth <= 0) return;
+
+    final normalizedX = ((localPosition.dx - leftOffset) / chartAreaWidth)
+        .clamp(0.0, 1.0);
+    final distance = normalizedX * elevationPoints.last.x;
+    final chartPoint = findClosestElevationPoint(distance);
+    final routePointIndex = _findRoutePointIndexForDistance(chartPoint.x);
+    if (routePointIndex < 0 || routePointIndex >= routePoints.length) return;
+
+    setState(() {
+      hoveredPointIndex = routePointIndex;
+      hoveredDistance = chartPoint.x;
+      hoveredSpot = chartPoint;
+    });
+    _handleTapForCheckpoint(distance: chartPoint.x);
+  }
+
+  int _findClosestRoutePointToLatLng(LatLng point) {
+    if (routePoints.isEmpty) return -1;
+
+    double minDistance = double.infinity;
+    int closestIndex = -1;
+    for (int i = 0; i < routePoints.length; i++) {
+      final routePoint = routePoints[i];
+      final distance = (point.latitude - routePoint.latitude) *
+              (point.latitude - routePoint.latitude) +
+          (point.longitude - routePoint.longitude) *
+              (point.longitude - routePoint.longitude);
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+    return closestIndex;
+  }
+
   // Handle tap for checkpoint creation
-  void _handleTapForCheckpoint() {
-    if (hoveredDistance == null || !mounted) return;
+  void _handleTapForCheckpoint({double? distance}) {
+    final checkpointDistance = distance ?? hoveredDistance;
+    if (checkpointDistance == null || !mounted) return;
 
     try {
       if (_isPendingCheckpointCreation) {
@@ -4064,8 +4249,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         // Start checkpoint creation
         setState(() {
           _isPendingCheckpointCreation = true;
-          _pendingCheckpointDistance = hoveredDistance;
+          _pendingCheckpointDistance = checkpointDistance;
         });
+        _showCheckpointConfirmation(checkpointDistance);
       }
     } catch (e) {
       // Reset state if an error occurs
@@ -4074,6 +4260,38 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         _pendingCheckpointDistance = null;
       });
     }
+  }
+
+  Future<void> _showCheckpointConfirmation(double distance) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add checkpoint?'),
+        content: Text(
+          'Add checkpoint at ${convertDistanceToDisplay(distance).toStringAsFixed(2)} $distanceUnitLabel?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || _pendingCheckpointDistance != distance) return;
+
+    if (confirmed == true) {
+      _createCheckpointAtDistance(distance);
+    }
+    setState(() {
+      _isPendingCheckpointCreation = false;
+      _pendingCheckpointDistance = null;
+    });
   }
 
   // Get marker for pending checkpoint
@@ -4387,11 +4605,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   }
 
   // Formatting function for pace axis labels
-  String formatPaceAxisLabel(double seconds) {
-    if (seconds <= 0) return ""; // Don't show 0:00 or negative
-    int mins = (seconds / 60).floor();
-    int secs = (seconds % 60).round();
-    // Pad seconds to two digits
+  String formatPaceAxisLabel(double secondsPerKilometer) {
+    if (secondsPerKilometer <= 0) return "";
+    double displaySeconds = convertPaceToDisplayUnit(secondsPerKilometer);
+    int mins = (displaySeconds / 60).floor();
+    int secs = (displaySeconds % 60).round();
     return '$mins:${secs.toString().padLeft(2, '0')}';
   }
 
@@ -4491,9 +4709,10 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     // Calculate pace in seconds per kilometer
     double paceSecondsPerKm = (segmentTime * 60) / segmentDistance;
 
-    // Format pace as MM:SS
-    int minutes = (paceSecondsPerKm / 60).floor();
-    int seconds = (paceSecondsPerKm % 60).round();
+    // Format pace as MM:SS in the selected unit basis
+    double displayPaceSeconds = convertPaceToDisplayUnit(paceSecondsPerKm);
+    int minutes = (displayPaceSeconds / 60).floor();
+    int seconds = (displayPaceSeconds % 60).round();
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 

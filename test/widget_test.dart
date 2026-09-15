@@ -17,4 +17,12 @@ void main() {
     // Verify that the upload button is present
     expect(find.text('Upload GPX File'), findsOneWidget);
   });
+
+  testWidgets('Route analyzer includes a distance/elevation unit toggle',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: RouteAnalyzerScreen()));
+
+    expect(find.text('km / m'), findsOneWidget);
+    expect(find.text('mi / ft'), findsOneWidget);
+  });
 }
