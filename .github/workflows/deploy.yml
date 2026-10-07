@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.19.0'  # Specify a stable Flutter version
+          flutter-version: '3.47.0'
       
       - name: Enable Web
         run: flutter config --enable-web
