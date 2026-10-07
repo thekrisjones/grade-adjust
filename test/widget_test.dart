@@ -99,4 +99,46 @@ void main() {
     expect(RouteAnalyzerScreen.maxAdjustmentSeconds, 30.0);
   });
 
+  test('Plan export payload includes all required route state', () {
+    final payload = RouteAnalyzerScreen.buildPlanPayload(
+      gpxXml: '<gpx><trk><trkseg><trkpt lat="1" lon="2"><ele>10</ele></trkpt></trkseg></trk></gpx>',
+      routePoints: const [
+        {'lat': 1.0, 'lon': 2.0},
+        {'lat': 1.5, 'lon': 2.5},
+      ],
+      checkpointData: const [
+        {'distance': 0.0, 'name': 'Start', 'pauseSeconds': 12.0, 'adjustmentFactor': 5.0},
+        {'distance': 2.0, 'name': 'Finish', 'pauseSeconds': 0.0, 'adjustmentFactor': 0.0},
+      ],
+      useImperialUnits: true,
+      useLinearPacing: true,
+      pacingVariationPercent: 12.5,
+      selectedPaceSeconds: 300.0,
+      startTimeHours: 7,
+      startTimeMinutes: 30,
+      carbsPerHour: 90.0,
+      gramsPerUnit: 45.0,
+      fluidPerHour: 750.0,
+      mlPerUnit: 500.0,
+    );
+
+    expect(payload['version'], 1);
+    expect(payload['gpxXml'], isNotEmpty);
+    expect(payload['routePoints'], isNotEmpty);
+    expect(payload['checkpoints'], isNotEmpty);
+    expect(payload['useImperialUnits'], true);
+    expect(payload['useLinearPacing'], true);
+    expect(payload['selectedPaceSeconds'], 300.0);
+    expect(payload['startTime'], {'hour': 7, 'minute': 30});
+  });
+
+  test('Web plan uploads read from bytes when path is unavailable', () async {
+    final text = await RouteAnalyzerScreen.readFileContents(
+      path: null,
+      bytes: const [80, 108, 97, 110, 32, 105, 109, 112, 111, 114, 116, 101, 100],
+    );
+
+    expect(text, 'Plan imported');
+  });
+
 }

@@ -7,13 +7,14 @@ import 'package:fl_chart/fl_chart.dart';
 // Add specific math imports required by analyzer indirectly
 import 'dart:math' show max, min, Point, pow, sin, cos, atan2, sqrt, exp;
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
 import 'package:excel/excel.dart' as xl;
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:io';
 
 // Import new files
 import '../models/checkpoint_data.dart';
+import '../utils/platform_file_helper.dart';
 import '../models/chart_data.dart';
 
 // Class to store checkpoint data - MOVED to lib/models/checkpoint_data.dart
@@ -88,6 +89,68 @@ class RouteAnalyzerScreen extends StatefulWidget {
 
   static const double maxAdjustmentSeconds = 30.0; // ±30 s/km
 
+  static Map<String, dynamic> buildPlanPayload({
+    String? gpxXml = '',
+    List<Map<String, double>> routePoints = const [],
+    List<Map<String, dynamic>> checkpointData = const [],
+    List<Map<String, double>> elevationPoints = const [],
+    bool useImperialUnits = false,
+    bool useLinearPacing = false,
+    double pacingVariationPercent = 15.0,
+    double selectedPaceSeconds = 240.0,
+    int? startTimeHours,
+    int? startTimeMinutes,
+    double carbsPerHour = 0.0,
+    double gramsPerUnit = 0.0,
+    double fluidPerHour = 0.0,
+    double mlPerUnit = 0.0,
+    bool showCheckpoints = false,
+    List<double> pacingVector = const [],
+    List<double> pacingMultipliers = const [],
+    List<double> smoothedGradients = const [],
+    double cumulativeDistance = 0.0,
+  }) {
+    return {
+      'version': 1,
+      'exportedAt': DateTime.now().toUtc().toIso8601String(),
+      'gpxXml': gpxXml ?? '',
+      'routePoints': routePoints,
+      'elevationPoints': elevationPoints,
+      'checkpoints': checkpointData,
+      'useImperialUnits': useImperialUnits,
+      'useLinearPacing': useLinearPacing,
+      'pacingVariationPercent': pacingVariationPercent,
+      'selectedPaceSeconds': selectedPaceSeconds,
+      'startTime': startTimeHours != null && startTimeMinutes != null
+          ? {'hour': startTimeHours, 'minute': startTimeMinutes}
+          : null,
+      'carbsPerHour': carbsPerHour,
+      'gramsPerUnit': gramsPerUnit,
+      'fluidPerHour': fluidPerHour,
+      'mlPerUnit': mlPerUnit,
+      'showCheckpoints': showCheckpoints,
+      'pacingVector': pacingVector,
+      'pacingMultipliers': pacingMultipliers,
+      'smoothedGradients': smoothedGradients,
+      'cumulativeDistance': cumulativeDistance,
+    };
+  }
+
+  static Future<String> readFileContents({
+    String? path,
+    List<int>? bytes,
+  }) async {
+    if (bytes != null && bytes.isNotEmpty) {
+      return String.fromCharCodes(bytes);
+    }
+
+    if (path != null && path.isNotEmpty) {
+      return await readTextFile(path: path);
+    }
+
+    throw const FormatException('No file content available to read');
+  }
+
   static List<double> buildRoundedHistogramBoundaries({
     required double minValue,
     required double maxValue,
@@ -154,6 +217,7 @@ class RouteAnalyzerScreen extends StatefulWidget {
 
 class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   Gpx? gpxData;
+  String gpxXmlData = '';
   List<LatLng> routePoints = [];
   List<FlSpot> elevationPoints = [];
   List<FlSpot> timePoints = []; // Points for time graph
@@ -731,6 +795,8 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
         try {
           gpxData = GpxReader().fromString(fileContent);
+
+          gpxXmlData = fileContent;
 
           // Verify that the GPX data contains valid tracks
           if (gpxData?.trks.isEmpty ?? true) {
@@ -1367,6 +1433,226 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     return RouteLayoutMode.medium;
   }
 
+  bool get canExportPlan => routePoints.isNotEmpty || checkpoints.isNotEmpty || gpxXmlData.isNotEmpty;
+
+  Map<String, dynamic> _buildPlanPayload() {
+    return RouteAnalyzerScreen.buildPlanPayload(
+      gpxXml: gpxXmlData,
+      routePoints: routePoints
+          .map((point) => {'lat': point.latitude, 'lon': point.longitude})
+          .toList(),
+      checkpointData: checkpoints
+          .map((checkpoint) => {
+                'distance': checkpoint.distance,
+                'name': checkpoint.name ?? '',
+                'elevation': checkpoint.elevation,
+                'elevationGain': checkpoint.elevationGain,
+                'elevationLoss': checkpoint.elevationLoss,
+                'cumulativeTime': checkpoint.cumulativeTime,
+                'timeFromPrevious': checkpoint.timeFromPrevious,
+                'pauseSeconds': checkpoint.pauseSeconds,
+                'id': checkpoint.id,
+                'baseGradeAdjustedPace': checkpoint.baseGradeAdjustedPace,
+                'gradeAdjustedDistance': checkpoint.gradeAdjustedDistance,
+                'cumulativeGradeAdjustedDistance':
+                    checkpoint.cumulativeGradeAdjustedDistance,
+                'adjustmentFactor': checkpoint.adjustmentFactor,
+                'legUnits': checkpoint.legUnits,
+                'cumulativeUnits': checkpoint.cumulativeUnits,
+                'legFluidUnits': checkpoint.legFluidUnits,
+                'cumulativeFluidUnits': checkpoint.cumulativeFluidUnits,
+              })
+          .toList(),
+      elevationPoints: elevationPoints
+          .map((spot) => {'distance': spot.x, 'elevation': spot.y})
+          .toList(),
+      useImperialUnits: useImperialUnits,
+      useLinearPacing: useLinearPacing,
+      pacingVariationPercent: pacingVariationPercent,
+      selectedPaceSeconds: selectedPaceSeconds,
+      startTimeHours: startTime?.hour,
+      startTimeMinutes: startTime?.minute,
+      carbsPerHour: carbsPerHour,
+      gramsPerUnit: gramsPerUnit,
+      fluidPerHour: fluidPerHour,
+      mlPerUnit: mlPerUnit,
+      showCheckpoints: showCheckpoints,
+      pacingVector: pacingVector,
+      pacingMultipliers: pacingMultipliers,
+      smoothedGradients: smoothedGradients,
+      cumulativeDistance: cumulativeDistance,
+    );
+  }
+
+  Future<void> exportPlanFile() async {
+    if (!canExportPlan) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data available to export')),
+      );
+      return;
+    }
+
+    try {
+      final payload = _buildPlanPayload();
+      final jsonString = const JsonEncoder.withIndent('  ').convert(payload);
+      const String defaultFileName = 'route_plan.json';
+
+      final savedPath = await saveTextFile(defaultFileName, jsonString);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Plan exported to your Downloads folder.')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting plan: $e')),
+      );
+    }
+  }
+
+  Future<void> loadPlanFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return;
+      }
+
+      final file = result.files.first;
+      final filePath = kIsWeb ? null : file.path;
+      final jsonString = await RouteAnalyzerScreen.readFileContents(
+        path: filePath,
+        bytes: file.bytes,
+      );
+
+      final decoded = jsonDecode(jsonString);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Plan file is not a JSON object');
+      }
+
+      final rawGpxXml = decoded['gpxXml'];
+      final routePointData = decoded['routePoints'] as List? ?? const [];
+      final elevationData = decoded['elevationPoints'] as List? ?? const [];
+      final checkpointData = decoded['checkpoints'] as List? ?? const [];
+
+      setState(() {
+        gpxXmlData = rawGpxXml is String ? rawGpxXml : '';
+        if (gpxXmlData.isNotEmpty) {
+          try {
+            gpxData = GpxReader().fromString(gpxXmlData);
+          } catch (_) {
+            gpxData = null;
+          }
+        }
+
+        useImperialUnits = decoded['useImperialUnits'] == true;
+        useLinearPacing = decoded['useLinearPacing'] == true;
+        pacingVariationPercent = (decoded['pacingVariationPercent'] ?? 15.0)
+            .toDouble();
+        selectedPaceSeconds = (decoded['selectedPaceSeconds'] ?? 240.0)
+            .toDouble();
+        carbsPerHour = (decoded['carbsPerHour'] ?? 0.0).toDouble();
+        gramsPerUnit = (decoded['gramsPerUnit'] ?? 0.0).toDouble();
+        fluidPerHour = (decoded['fluidPerHour'] ?? 0.0).toDouble();
+        mlPerUnit = (decoded['mlPerUnit'] ?? 0.0).toDouble();
+        showCheckpoints = decoded['showCheckpoints'] == true;
+        cumulativeDistance = (decoded['cumulativeDistance'] ?? 0.0).toDouble();
+
+        if (decoded['startTime'] is Map) {
+          final timeMap = decoded['startTime'] as Map;
+          startTime = TimeOfDay(
+            hour: (timeMap['hour'] ?? 0) as int,
+            minute: (timeMap['minute'] ?? 0) as int,
+          );
+        } else {
+          startTime = null;
+        }
+
+        routePoints = routePointData.map<LatLng>((entry) {
+          final map = entry as Map;
+          return LatLng(
+            (map['lat'] as num).toDouble(),
+            (map['lon'] as num).toDouble(),
+          );
+        }).toList();
+
+        elevationPoints = elevationData.map<FlSpot>((entry) {
+          final map = entry as Map;
+          return FlSpot(
+            (map['distance'] as num).toDouble(),
+            (map['elevation'] as num).toDouble(),
+          );
+        }).toList();
+
+        checkpoints = checkpointData.map<CheckpointData>((entry) {
+          final map = entry as Map;
+          final checkpoint = CheckpointData(
+            distance: (map['distance'] as num).toDouble(),
+          );
+          checkpoint.id = (map['id'] ?? DateTime.now().millisecondsSinceEpoch.toString()).toString();
+          checkpoint.name = map['name']?.toString();
+          checkpoint.elevation = (map['elevation'] ?? 0.0).toDouble();
+          checkpoint.elevationGain = (map['elevationGain'] ?? 0.0).toDouble();
+          checkpoint.elevationLoss = (map['elevationLoss'] ?? 0.0).toDouble();
+          checkpoint.cumulativeTime = (map['cumulativeTime'] ?? 0.0).toDouble();
+          checkpoint.timeFromPrevious = (map['timeFromPrevious'] ?? 0.0).toDouble();
+          checkpoint.pauseSeconds = (map['pauseSeconds'] ?? 0.0).toDouble();
+          checkpoint.baseGradeAdjustedPace =
+              (map['baseGradeAdjustedPace'] ?? 0.0).toDouble();
+          checkpoint.gradeAdjustedDistance =
+              (map['gradeAdjustedDistance'] ?? 0.0).toDouble();
+          checkpoint.cumulativeGradeAdjustedDistance =
+              (map['cumulativeGradeAdjustedDistance'] ?? 0.0).toDouble();
+          checkpoint.adjustmentFactor =
+              (map['adjustmentFactor'] ?? 0.0).toDouble();
+          checkpoint.legUnits = (map['legUnits'] ?? 0) as int;
+          checkpoint.cumulativeUnits = (map['cumulativeUnits'] ?? 0) as int;
+          checkpoint.legFluidUnits = (map['legFluidUnits'] ?? 0) as int;
+          checkpoint.cumulativeFluidUnits = (map['cumulativeFluidUnits'] ?? 0) as int;
+          return checkpoint;
+        }).toList();
+
+        pacingVector = (decoded['pacingVector'] as List? ?? const [])
+            .map<double>((value) => (value as num).toDouble())
+            .toList();
+        pacingMultipliers = (decoded['pacingMultipliers'] as List? ?? const [])
+            .map<double>((value) => (value as num).toDouble())
+            .toList();
+        smoothedGradients = (decoded['smoothedGradients'] as List? ?? const [])
+            .map<double>((value) => (value as num).toDouble())
+            .toList();
+      });
+
+      if (checkpoints.isNotEmpty) {
+        setState(() {
+          checkpoints.sort((a, b) => a.distance.compareTo(b.distance));
+          _recalculatePacingAndCheckpoints();
+        });
+      }
+
+      if (routePoints.isNotEmpty) {
+        Future.delayed(const Duration(milliseconds: 100), () {
+          mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(routePoints),
+              padding: const EdgeInsets.all(20.0),
+            ),
+          );
+        });
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Plan loaded')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading plan: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1377,9 +1663,28 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
             Center(
               child: Column(
                 children: [
-                  ElevatedButton(
-                    onPressed: pickGPXFile,
-                    child: const Text('Upload GPX File'),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: pickGPXFile,
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('Upload GPX File'),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: loadPlanFile,
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('Upload Plan'),
+                      ),
+                      if (canExportPlan)
+                        ElevatedButton.icon(
+                          onPressed: exportPlanFile,
+                          icon: const Icon(Icons.download),
+                          label: const Text('Export Plan'),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                   ToggleButtons(
@@ -3410,50 +3715,18 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         excel.save(fileName: defaultFilename);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Downloading checkpoint data')),
+          const SnackBar(content: Text('Checkpoint data downloaded to your Downloads folder.')),
         );
         return;
       }
 
-      // For native platforms
-      String? outputFile;
-      try {
-        // Try to use FilePicker to get save location from user
-        outputFile = await FilePicker.platform.saveFile(
-          dialogTitle: 'Save checkpoint data',
-          fileName: defaultFilename,
-          type: FileType.custom,
-          allowedExtensions: ['xlsx'],
-        );
-
-        if (outputFile == null) {
-          // User cancelled the save dialog
-          return;
-        }
-
-        // Ensure the file has the correct extension
-        if (!outputFile.endsWith('.xlsx')) {
-          outputFile += '.xlsx';
-        }
-      } catch (e) {
-        // FilePicker's saveFile isn't implemented on all platforms
-        // Show error and return
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open save dialog: $e')),
-        );
-        return;
-      }
-
-      // Save the Excel file to disk (only for native platforms)
       final fileBytes = excel.save();
       if (fileBytes != null) {
         try {
-          File(outputFile)
-            ..createSync(recursive: true)
-            ..writeAsBytesSync(fileBytes);
+          final savedPath = await saveBytesFile(defaultFilename, fileBytes);
 
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Exported checkpoints to $outputFile')),
+            const SnackBar(content: Text('Checkpoint data exported to your Downloads folder.')),
           );
         } catch (e) {
           ScaffoldMessenger.of(context).showSnackBar(
