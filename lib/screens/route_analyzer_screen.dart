@@ -151,6 +151,94 @@ class RouteAnalyzerScreen extends StatefulWidget {
     throw const FormatException('No file content available to read');
   }
 
+  static Widget buildPaceControls({
+    required BuildContext context,
+    required double selectedPaceSeconds,
+    required double estimatedTotalTimeMinutes,
+    required String distanceUnitLabel,
+    required String Function(double seconds) formatPaceForDisplay,
+    required String Function(double minutes) formatTotalTime,
+    required double minPaceSeconds,
+    required double maxPaceSeconds,
+    required void Function(double value) onPaceChanged,
+    required VoidCallback onDecreaseFive,
+    required VoidCallback onDecreaseOne,
+    required VoidCallback onIncreaseOne,
+    required VoidCallback onIncreaseFive,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Text(
+                'Grade Adjusted Pace: ${formatPaceForDisplay(selectedPaceSeconds)}/$distanceUnitLabel',
+              ),
+              Expanded(
+                child: Slider(
+                  value: selectedPaceSeconds,
+                  min: minPaceSeconds,
+                  max: maxPaceSeconds,
+                  onChanged: onPaceChanged,
+                ),
+              ),
+            ],
+          ),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ElevatedButton(
+                onPressed: onDecreaseFive,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(40, 36),
+                ),
+                child: const Text('-5s', style: TextStyle(fontSize: 14)),
+              ),
+              ElevatedButton(
+                onPressed: onDecreaseOne,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(40, 36),
+                ),
+                child: const Text('-1s', style: TextStyle(fontSize: 14)),
+              ),
+              ElevatedButton(
+                onPressed: onIncreaseOne,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(40, 36),
+                ),
+                child: const Text('+1s', style: TextStyle(fontSize: 14)),
+              ),
+              ElevatedButton(
+                onPressed: onIncreaseFive,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(40, 36),
+                ),
+                child: const Text('+5s', style: TextStyle(fontSize: 14)),
+              ),
+            ],
+          ),
+          if (estimatedTotalTimeMinutes > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              child: Text(
+                'Estimated Total Time: ${formatTotalTime(estimatedTotalTimeMinutes)}',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   static List<double> buildRoundedHistogramBoundaries({
     required double minValue,
     required double maxValue,
@@ -1716,117 +1804,56 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                 builder: (context) {
                   final routeLayoutMode = _getRouteLayoutMode(context);
 
-                  final paceControls = Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                                'Grade Adjusted Pace: ${formatPaceForDisplay(selectedPaceSeconds)}/$distanceUnitLabel'),
-                            Expanded(
-                              child: Slider(
-                                value: selectedPaceSeconds,
-                                min: minPaceSeconds,
-                                max: maxPaceSeconds,
-                                onChanged: (value) {
-                                  setState(() {
-                                    selectedPaceSeconds = value;
-                                    _recalculatePacingAndCheckpoints();
-                                  });
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  selectedPaceSeconds =
-                                      max(minPaceSeconds, selectedPaceSeconds - 5);
-                                  _recalculatePacingAndCheckpoints();
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                minimumSize: const Size(40, 36),
-                              ),
-                              child: const Text('-5s', style: TextStyle(fontSize: 14)),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  selectedPaceSeconds =
-                                      max(minPaceSeconds, selectedPaceSeconds - 1);
-                                  _recalculatePacingAndCheckpoints();
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                minimumSize: const Size(40, 36),
-                              ),
-                              child: const Text('-1s', style: TextStyle(fontSize: 14)),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  selectedPaceSeconds =
-                                      min(maxPaceSeconds, selectedPaceSeconds + 1);
-                                  _recalculatePacingAndCheckpoints();
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                minimumSize: const Size(40, 36),
-                              ),
-                              child: const Text('+1s', style: TextStyle(fontSize: 14)),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                setState(() {
-                                  selectedPaceSeconds =
-                                      min(maxPaceSeconds, selectedPaceSeconds + 5);
-                                  _recalculatePacingAndCheckpoints();
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                minimumSize: const Size(40, 36),
-                              ),
-                              child: const Text('+5s', style: TextStyle(fontSize: 14)),
-                            ),
-                          ],
-                        ),
-                        if (timePoints.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: Text(
-                              'Estimated Total Time: ${_formatTotalTime(_estimatedTotalTimeMinutes)}',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
+                  final paceControls = RouteAnalyzerScreen.buildPaceControls(
+                    context: context,
+                    selectedPaceSeconds: selectedPaceSeconds,
+                    estimatedTotalTimeMinutes: _estimatedTotalTimeMinutes,
+                    distanceUnitLabel: distanceUnitLabel,
+                    formatPaceForDisplay: formatPaceForDisplay,
+                    formatTotalTime: _formatTotalTime,
+                    minPaceSeconds: minPaceSeconds,
+                    maxPaceSeconds: maxPaceSeconds,
+                    onPaceChanged: (value) {
+                      setState(() {
+                        selectedPaceSeconds = value;
+                        _recalculatePacingAndCheckpoints();
+                      });
+                    },
+                    onDecreaseFive: () {
+                      setState(() {
+                        selectedPaceSeconds =
+                            max(minPaceSeconds, selectedPaceSeconds - 5);
+                        _recalculatePacingAndCheckpoints();
+                      });
+                    },
+                    onDecreaseOne: () {
+                      setState(() {
+                        selectedPaceSeconds =
+                            max(minPaceSeconds, selectedPaceSeconds - 1);
+                        _recalculatePacingAndCheckpoints();
+                      });
+                    },
+                    onIncreaseOne: () {
+                      setState(() {
+                        selectedPaceSeconds =
+                            min(maxPaceSeconds, selectedPaceSeconds + 1);
+                        _recalculatePacingAndCheckpoints();
+                      });
+                    },
+                    onIncreaseFive: () {
+                      setState(() {
+                        selectedPaceSeconds =
+                            min(maxPaceSeconds, selectedPaceSeconds + 5);
+                        _recalculatePacingAndCheckpoints();
+                      });
+                    },
                   );
 
                   final mapAndElevation = Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (routeLayoutMode == RouteLayoutMode.medium) ...[
-                        paceControls,
-                        const SizedBox(height: 8),
-                      ],
+                      paceControls,
+                      const SizedBox(height: 8),
                       // Map toggle button
                       Padding(
                         padding: const EdgeInsets.symmetric(
@@ -2009,7 +2036,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                                             width: 3,
                                                             height: 3,
                                                             decoration: BoxDecoration(
-                                                              color: Colors.red.withOpacity(0.7),
+                                                              color: Colors.red.withValues(alpha: 0.7),
                                                               shape: BoxShape.circle,
                                                               border: Border.all(
                                                                 color: Colors.white,
@@ -2083,7 +2110,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                     _findRoutePointIndexForDistance(hoveredPoint.x);
 
                                 if (routePointIndex < 0 ||
-                                    routePointIndex >= routePoints.length) return;
+                                    routePointIndex >= routePoints.length) {
+                                  return;
+                                }
 
                                 if (mounted) {
                                   setState(() {
@@ -2251,7 +2280,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                         colors: List.generate(
                                           smoothedGradients.length,
                                           (i) => getGradientColor(smoothedGradients[i])
-                                              .withOpacity(0.2),
+                                              .withValues(alpha: 0.2),
                                         ),
                                         stops: List.generate(
                                           smoothedGradients.length,
@@ -3744,8 +3773,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   // Get average grade adjusted pace for a segment
   double getSegmentBaseGradeAdjustedPace(
       double startDistance, double endDistance) {
-    if (elevationPoints.isEmpty || smoothedGradients.isEmpty)
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty) {
       return selectedPaceSeconds;
+    }
 
     // Find elevation points within this segment
     List<int> pointIndices = [];
@@ -3849,7 +3879,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     if (elevationPoints.isEmpty ||
         smoothedGradients.isEmpty ||
         minElevation == null ||
-        maxElevation == null) return result;
+        maxElevation == null) {
+      return result;
+    }
 
     // Safety check - ensure we have enough data to create meaningful bins
     if (elevationPoints.length < 5 || smoothedGradients.length < 5) {
@@ -4214,7 +4246,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
           width: 5,
           height: 5,
           decoration: BoxDecoration(
-            color: Colors.amber.withOpacity(0.7),
+            color: Colors.amber.withValues(alpha: 0.7),
             shape: BoxShape.circle,
             border: Border.all(
               color: Colors.white,
@@ -4365,7 +4397,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
             child: Text(
               data[0].category,
               style: TextStyle(
-                color: color.withOpacity(0.8),
+                color: color.withValues(alpha: 0.8),
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
               ),
@@ -4422,8 +4454,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                         showTitles: true,
                         reservedSize: 75,
                         getTitlesWidget: (value, meta) {
-                          if (value < 0 || value >= data.length)
+                          if (value < 0 || value >= data.length) {
                             return const Text('');
+                          }
                           return RotatedBox(
                             quarterTurns: 3,
                             child: Text(
@@ -4476,7 +4509,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                       barRods: [
                         BarChartRodData(
                           toY: data[index].value,
-                          color: color.withOpacity(0.7),
+                          color: color.withValues(alpha: 0.7),
                           width:
                               clampedWidth, // Use the calculated responsive width
                           borderRadius: const BorderRadius.vertical(
@@ -4550,8 +4583,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   // Calculate the grade adjusted distance for a segment
   double calculateGradeAdjustedDistance(
       double startDistance, double endDistance) {
-    if (elevationPoints.isEmpty || smoothedGradients.isEmpty)
+    if (elevationPoints.isEmpty || smoothedGradients.isEmpty) {
       return endDistance - startDistance;
+    }
 
     double totalAdjustedDistance = 0;
 
@@ -4601,8 +4635,9 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
 
   // Helper method to get segment pace for a checkpoint
   String _getSegmentPace(int checkpointIndex) {
-    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length)
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) {
       return 'N/A';
+    }
 
     // Calculate actual segment pace as segment time / segment distance
     double segmentDistance = _getSegmentDistance(checkpointIndex);

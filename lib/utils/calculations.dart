@@ -243,7 +243,9 @@ double getSegmentBaseGradeAdjustedPace(
     double basePaceSelected) {
   if (elevationPoints.isEmpty ||
       smoothedGradients.isEmpty ||
-      startDistance >= endDistance) return basePaceSelected;
+      startDistance >= endDistance) {
+    return basePaceSelected;
+  }
 
   double weightedPaceSum = 0;
   double totalDistance = 0;

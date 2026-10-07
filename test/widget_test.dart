@@ -28,7 +28,7 @@ void main() {
 
   testWidgets('Responsive route analysis layout resolves the supported breakpoint modes',
       (WidgetTester tester) async {
-    final controls = const SizedBox.shrink();
+    const controls = SizedBox.shrink();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -65,6 +65,38 @@ void main() {
       ).layoutMode,
       RouteLayoutMode.medium,
     );
+  });
+
+  testWidgets('Pace controls render in the single-column layout',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => RouteAnalyzerScreen.buildPaceControls(
+              context: context,
+              selectedPaceSeconds: 240,
+              estimatedTotalTimeMinutes: 95,
+              distanceUnitLabel: 'km',
+              formatPaceForDisplay: (seconds) => '04:00',
+              formatTotalTime: (minutes) => '1h 35m 0s',
+              minPaceSeconds: 165,
+              maxPaceSeconds: 1200,
+              onPaceChanged: (_) {},
+              onDecreaseFive: () {},
+              onDecreaseOne: () {},
+              onIncreaseOne: () {},
+              onIncreaseFive: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Grade Adjusted Pace: 04:00/km'), findsOneWidget);
+    expect(find.text('-5s'), findsOneWidget);
+    expect(find.text('+5s'), findsOneWidget);
+    expect(find.text('Estimated Total Time: 1h 35m 0s'), findsOneWidget);
   });
 
   test('Rounded histogram bins stay readable and provide at least five buckets', () {

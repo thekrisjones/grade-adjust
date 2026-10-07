@@ -53,7 +53,7 @@ class PaceChart extends StatelessWidget {
             },
           ),
         ),
-        gridData: FlGridData(show: true),
+        gridData: const FlGridData(show: true),
         titlesData: FlTitlesData(
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
@@ -73,11 +73,11 @@ class PaceChart extends StatelessWidget {
               },
             ),
           ),
-          rightTitles: AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
+          rightTitles: const AxisTitles(
+            sideTitles: const SideTitles(showTitles: false),
           ),
-          topTitles: AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
+          topTitles: const AxisTitles(
+            sideTitles: const SideTitles(showTitles: false),
           ),
         ),
         borderData: FlBorderData(show: true),
@@ -88,10 +88,10 @@ class PaceChart extends StatelessWidget {
             color: Colors.green,
             barWidth: 2,
             isStrokeCapRound: true,
-            dotData: FlDotData(show: false),
+            dotData: const FlDotData(show: false),
             belowBarData: BarAreaData(
               show: true,
-              color: Colors.green.withOpacity(0.2),
+              color: Colors.green.withValues(alpha: 0.2),
             ),
           ),
         ],
