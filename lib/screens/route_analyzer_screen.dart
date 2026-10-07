@@ -22,8 +22,131 @@ import '../models/chart_data.dart';
 // Class to store chart data for the summary section - MOVED to lib/models/chart_data.dart
 // class ChartData { ... }
 
+enum RouteLayoutMode {
+  narrow,
+  medium,
+}
+
+class ResponsiveRouteAnalysisLayout extends StatelessWidget {
+  const ResponsiveRouteAnalysisLayout({
+    super.key,
+    required this.layoutMode,
+    required this.mapAndElevation,
+    required this.histograms,
+    required this.splitsTable,
+  });
+
+  final RouteLayoutMode layoutMode;
+  final Widget mapAndElevation;
+  final Widget histograms;
+  final Widget splitsTable;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (layoutMode) {
+      case RouteLayoutMode.narrow:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            mapAndElevation,
+            const SizedBox(height: 12),
+            histograms,
+            const SizedBox(height: 12),
+            splitsTable,
+          ],
+        );
+      case RouteLayoutMode.medium:
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const double columnGap = 12.0;
+            final double equalColumnWidth =
+                ((constraints.maxWidth - columnGap) / 2).clamp(400.0, double.infinity);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: equalColumnWidth, child: mapAndElevation),
+                    const SizedBox(width: columnGap),
+                    SizedBox(width: equalColumnWidth, child: histograms),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                splitsTable,
+              ],
+            );
+          },
+        );
+    }
+  }
+}
+
 class RouteAnalyzerScreen extends StatefulWidget {
   const RouteAnalyzerScreen({super.key});
+
+  static const double maxAdjustmentSeconds = 30.0; // ±30 s/km
+
+  static List<double> buildRoundedHistogramBoundaries({
+    required double minValue,
+    required double maxValue,
+    required List<double> stepOptions,
+    required int minimumBins,
+    bool forceZeroStart = false,
+  }) {
+    if (maxValue <= minValue) {
+      return [minValue, maxValue];
+    }
+
+    double chosenStep = stepOptions.firstWhere(
+      (step) => (maxValue - minValue) / minimumBins <= step,
+      orElse: () => stepOptions.last,
+    );
+
+    double lowerBound = forceZeroStart
+        ? 0.0
+        : (minValue / chosenStep).floorToDouble() * chosenStep;
+    double upperBound = (maxValue / chosenStep).ceilToDouble() * chosenStep;
+
+    if ((upperBound - lowerBound) / chosenStep < minimumBins) {
+      for (final step in stepOptions) {
+        if (step < chosenStep) {
+          chosenStep = step;
+          lowerBound = forceZeroStart
+              ? 0.0
+              : (minValue / chosenStep).floorToDouble() * chosenStep;
+          upperBound = (maxValue / chosenStep).ceilToDouble() * chosenStep;
+          if ((upperBound - lowerBound) / chosenStep >= minimumBins) {
+            break;
+          }
+        }
+      }
+    }
+
+    final boundaries = <double>[];
+    for (double boundary = lowerBound;
+        boundary <= upperBound + 0.0000001;
+        boundary += chosenStep) {
+      boundaries.add(boundary);
+    }
+
+    if (boundaries.length < minimumBins + 1) {
+      final fallbackStep = stepOptions.first;
+      boundaries.clear();
+      final fallbackLower = forceZeroStart
+          ? 0.0
+          : (minValue / fallbackStep).floorToDouble() * fallbackStep;
+      final fallbackUpper = (maxValue / fallbackStep).ceilToDouble() * fallbackStep;
+      for (double boundary = fallbackLower;
+          boundary <= fallbackUpper + 0.0000001;
+          boundary += fallbackStep) {
+        boundaries.add(boundary);
+      }
+    }
+
+    return boundaries;
+  }
 
   @override
   State<RouteAnalyzerScreen> createState() => _RouteAnalyzerScreenState();
@@ -116,11 +239,11 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
   static const double maxPaceSeconds = 1200; // 20:00
   // Add minimum allowed segment pace (2:00 min/km)
   static const double minSegmentPace = 120; // 2:00 min/km
+  static const double paceAdjustmentStep = 5.0; // 5 s/km per button press
 
   // Manual pace adjustment constants
   static const double minAllowedPaceSeconds = 160; // 2:40 min/km
   static const double maxAllowedPaceSeconds = 2400; // 40:00 min/km
-  static const double maxAdjustmentSeconds = 60; // ±60 s/km
   static const double adjustmentIncrement = 5; // 5 s/km increments
   // Remove the flag to show adjusted pace column
 
@@ -272,7 +395,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     double adjustedPace = basePaceSeconds + adjustmentSeconds;
     return adjustedPace >= minAllowedPaceSeconds &&
         adjustedPace <= maxAllowedPaceSeconds &&
-        adjustmentSeconds.abs() <= maxAdjustmentSeconds;
+        adjustmentSeconds.abs() <= RouteAnalyzerScreen.maxAdjustmentSeconds;
   }
 
   /// Validates if the overall average pace would remain within limits
@@ -815,12 +938,13 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         return;
       }
 
-      // Process resampled points for route display (sample every 10th point for map performance)
-      routePoints = [];
-      for (int i = 0; i < resampledData.length; i += 10) {
-        var point = resampledData[i];
-        routePoints.add(LatLng(point['lat']!, point['lon']!));
-      }
+      // Keep the map line dense enough to preserve detail without dropping the
+      // route below a 10m sampling interval. The GPX data is already resampled to
+      // 10m increments, so retaining the resampled points preserves trace detail
+      // while avoiding the much sparser 100m gaps from the old sampling strategy.
+      routePoints = resampledData
+          .map((point) => LatLng(point['lat']!, point['lon']!))
+          .toList();
 
       // Process elevation points using all resampled data
       double totalElevationGain = 0;
@@ -1232,6 +1356,17 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     }
   }
 
+  RouteLayoutMode _getRouteLayoutMode(BuildContext context) {
+    const double mediumLayoutMinWidth = 824.0;
+    final double width = MediaQuery.sizeOf(context).width;
+
+    if (width < mediumLayoutMinWidth) {
+      return RouteLayoutMode.narrow;
+    }
+
+    return RouteLayoutMode.medium;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1272,944 +1407,745 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
               ),
             ),
             if (routePoints.isNotEmpty) ...[
-              // Pace slider and total time
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Column(
-                  children: [
-                    Row(
+              Builder(
+                builder: (context) {
+                  final routeLayoutMode = _getRouteLayoutMode(context);
+
+                  final paceControls = Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Column(
                       children: [
-                        Text(
-                            'Grade Adjusted Pace: ${formatPaceForDisplay(selectedPaceSeconds)}/$distanceUnitLabel'),
-                        Expanded(
-                          child: Slider(
-                            value: selectedPaceSeconds,
-                            min: minPaceSeconds,
-                            max: maxPaceSeconds,
-                            onChanged: (value) {
-                              setState(() {
-                                selectedPaceSeconds = value;
-                                _recalculatePacingAndCheckpoints();
-                              });
-                            },
-                          ),
+                        Row(
+                          children: [
+                            Text(
+                                'Grade Adjusted Pace: ${formatPaceForDisplay(selectedPaceSeconds)}/$distanceUnitLabel'),
+                            Expanded(
+                              child: Slider(
+                                value: selectedPaceSeconds,
+                                min: minPaceSeconds,
+                                max: maxPaceSeconds,
+                                onChanged: (value) {
+                                  setState(() {
+                                    selectedPaceSeconds = value;
+                                    _recalculatePacingAndCheckpoints();
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
                         ),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  selectedPaceSeconds =
+                                      max(minPaceSeconds, selectedPaceSeconds - 5);
+                                  _recalculatePacingAndCheckpoints();
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                minimumSize: const Size(40, 36),
+                              ),
+                              child: const Text('-5s', style: TextStyle(fontSize: 14)),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  selectedPaceSeconds =
+                                      max(minPaceSeconds, selectedPaceSeconds - 1);
+                                  _recalculatePacingAndCheckpoints();
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                minimumSize: const Size(40, 36),
+                              ),
+                              child: const Text('-1s', style: TextStyle(fontSize: 14)),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  selectedPaceSeconds =
+                                      min(maxPaceSeconds, selectedPaceSeconds + 1);
+                                  _recalculatePacingAndCheckpoints();
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                minimumSize: const Size(40, 36),
+                              ),
+                              child: const Text('+1s', style: TextStyle(fontSize: 14)),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  selectedPaceSeconds =
+                                      min(maxPaceSeconds, selectedPaceSeconds + 5);
+                                  _recalculatePacingAndCheckpoints();
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 8),
+                                minimumSize: const Size(40, 36),
+                              ),
+                              child: const Text('+5s', style: TextStyle(fontSize: 14)),
+                            ),
+                          ],
+                        ),
+                        if (timePoints.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text(
+                              'Estimated Total Time: ${_formatTotalTime(_estimatedTotalTimeMinutes)}',
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
-                    // Fine-tuning buttons
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              // Decrease by 5 seconds, but not below minimum
-                              selectedPaceSeconds =
-                                  max(minPaceSeconds, selectedPaceSeconds - 5);
-                              _recalculatePacingAndCheckpoints();
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            minimumSize: const Size(40, 36),
-                          ),
-                          child:
-                              const Text('-5s', style: TextStyle(fontSize: 14)),
-                        ),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              // Decrease by 1 second, but not below minimum
-                              selectedPaceSeconds =
-                                  max(minPaceSeconds, selectedPaceSeconds - 1);
-                              _recalculatePacingAndCheckpoints();
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            minimumSize: const Size(40, 36),
-                          ),
-                          child:
-                              const Text('-1s', style: TextStyle(fontSize: 14)),
-                        ),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              // Increase by 1 second, but not above maximum
-                              selectedPaceSeconds =
-                                  min(maxPaceSeconds, selectedPaceSeconds + 1);
-                              _recalculatePacingAndCheckpoints();
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            minimumSize: const Size(40, 36),
-                          ),
-                          child:
-                              const Text('+1s', style: TextStyle(fontSize: 14)),
-                        ),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {
-                              // Increase by 5 seconds, but not above maximum
-                              selectedPaceSeconds =
-                                  min(maxPaceSeconds, selectedPaceSeconds + 5);
-                              _recalculatePacingAndCheckpoints();
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
-                            minimumSize: const Size(40, 36),
-                          ),
-                          child:
-                              const Text('+5s', style: TextStyle(fontSize: 14)),
-                        ),
-                      ],
-                    ),
-                    if (timePoints.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: Text(
-                          'Estimated Total Time: ${_formatTotalTime(_estimatedTotalTimeMinutes)}',
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Column(
-                children: [
-                  // Map toggle button
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0, vertical: 8.0),
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          showMap = !showMap;
-                        });
-                      },
-                      icon: Icon(
-                          showMap ? Icons.visibility_off : Icons.visibility),
-                      label: Text(showMap ? 'Hide Map' : 'Show Map'),
-                    ),
-                  ),
-                  // Map container
-                  if (showMap)
-                    SizedBox(
-                      height: 300,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Calculate container width based on available space
-                          final screenWidth = constraints.maxWidth;
-                          final double horizontalPadding =
-                              screenWidth > 600 ? 40.0 : 0.0;
-                          final double containerWidth =
-                              screenWidth - (horizontalPadding * 2);
+                  );
 
-                          return Center(
-                            child: Container(
-                              width: containerWidth,
-                              decoration: BoxDecoration(
-                                border: screenWidth > 600
-                                    ? Border.all(
-                                        color: Colors.grey.shade300, width: 1)
-                                    : null,
-                                borderRadius: screenWidth > 600
-                                    ? BorderRadius.circular(8)
-                                    : null,
-                              ),
-                              child: Stack(
-                                children: [
-                                  LayoutBuilder(
-                                    builder: (context, mapConstraints) {
-                                      return MouseRegion(
-                                          cursor: hoveredDistance != null
-                                              ? SystemMouseCursors.click
-                                              : SystemMouseCursors.basic,
-                                          onHover: (event) {
-                                            // Throttle hover events for better performance
-                                            if (_mapDebounceTimer?.isActive ??
-                                                false) return;
-
-                                            // Safely access the render box
-                                            final RenderBox? box =
-                                                context.findRenderObject()
-                                                    as RenderBox?;
-                                            if (box == null) return;
-
-                                            try {
-                                              final localPosition =
-                                                  box.globalToLocal(
-                                                      event.position);
-
-                                              final closestIndex =
-                                                  findClosestRoutePoint(
-                                                      localPosition,
-                                                      mapConstraints);
-                                              if (closestIndex >= 0 &&
-                                                  closestIndex <
-                                                      routePoints.length) {
-                                                // Map the route point index to an elevation point index
-                                                int elevationIndex;
-
-                                                // If the arrays have the same length, use direct mapping
-                                                if (routePoints.length ==
-                                                    elevationPoints.length) {
-                                                  elevationIndex = closestIndex;
-                                                } else {
-                                                  // Otherwise, use proportional mapping
-                                                  double ratio =
-                                                      elevationPoints.length /
-                                                          routePoints.length;
-                                                  elevationIndex =
-                                                      (closestIndex * ratio)
-                                                          .round();
-                                                  elevationIndex =
-                                                      elevationIndex.clamp(
-                                                          0,
-                                                          elevationPoints
-                                                                  .length -
-                                                              1);
-                                                }
-
-                                                // If we found a valid elevation point, update the chart and info panel
-                                                if (elevationIndex >= 0 &&
-                                                    elevationIndex <
-                                                        elevationPoints
-                                                            .length &&
-                                                    mounted) {
-                                                  // Update all state in a single setState call for immediate visual feedback
-                                                  setState(() {
-                                                    hoveredPointIndex =
-                                                        closestIndex;
-                                                    _closestElevationPointIndex =
-                                                        elevationIndex;
-                                                    hoveredDistance =
-                                                        elevationPoints[
-                                                                elevationIndex]
-                                                            .x;
-                                                    hoveredSpot =
-                                                        elevationPoints[
-                                                            elevationIndex];
-                                                  });
-                                                }
-
-                                                // Set a very short throttle to prevent too many updates
-                                                _mapDebounceTimer = Timer(
-                                                    const Duration(
-                                                        milliseconds: 5),
-                                                    () {});
-                                              }
-                                            } catch (e) {
-                                              // Silently handle any errors during hover handling
-                                            }
-                                          },
-                                          onExit: (_) {
-                                            if (mounted) {
-                                              setState(() {
-                                                hoveredPointIndex = null;
-                                                hoveredDistance = null;
-                                                hoveredSpot = null;
-                                                _closestElevationPointIndex =
-                                                    -1;
-                                              });
-                                            }
-                                          },
-                                          child: FlutterMap(
-                                            mapController: mapController,
-                                            options: MapOptions(
-                                              onTap: (tapPosition, point) {
-                                                _handleMapTap(point);
-                                              },
-                                              initialCameraFit:
-                                                  CameraFit.bounds(
-                                                bounds: LatLngBounds.fromPoints(
-                                                    routePoints),
-                                                padding:
-                                                    const EdgeInsets.all(20.0),
-                                              ),
-                                            ),
-                                            children: [
-                                              TileLayer(
-                                                urlTemplate:
-                                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                                userAgentPackageName:
-                                                    'com.example.app',
-                                                tileProvider:
-                                                    CancellableNetworkTileProvider(),
-                                              ),
-                                              PolylineLayer(
-                                                polylines: [
-                                                  Polyline(
-                                                    points: routePoints,
-                                                    color: Colors.blue,
-                                                    strokeWidth: 3,
-                                                  ),
-                                                ],
-                                              ),
-                                              if (hoveredPointIndex != null &&
-                                                  hoveredPointIndex! <
-                                                      routePoints.length)
-                                                MarkerLayer(
-                                                  markers: [
-                                                    Marker(
-                                                      point: routePoints[
-                                                          hoveredPointIndex!],
-                                                      child: Container(
-                                                        width: 3,
-                                                        height: 3,
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color: Colors.blue,
-                                                          shape:
-                                                              BoxShape.circle,
-                                                          border: Border.all(
-                                                            color: Colors.white,
-                                                            width: 1,
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              // Add markers for checkpoints and pending checkpoint
-                                              MarkerLayer(
-                                                markers: [
-                                                  // Regular checkpoints
-                                                  if (showCheckpoints)
-                                                    ...checkpoints
-                                                        .map((checkpoint) {
-                                                      // Find the closest route point to this checkpoint distance
-                                                      int routePointIndex =
-                                                          _findRoutePointIndexForDistance(
-                                                              checkpoint
-                                                                  .distance);
-                                                      if (routePointIndex < 0 ||
-                                                          routePointIndex >=
-                                                              routePoints
-                                                                  .length) {
-                                                        return Marker(
-                                                          point: const LatLng(
-                                                              0, 0),
-                                                          width: 0,
-                                                          height: 0,
-                                                          child: Container(),
-                                                        );
-                                                      }
-
-                                                      return Marker(
-                                                        point: routePoints[
-                                                            routePointIndex],
-                                                        child: Container(
-                                                          width: 3,
-                                                          height: 3,
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: Colors.red
-                                                                .withOpacity(
-                                                                    0.7),
-                                                            shape:
-                                                                BoxShape.circle,
-                                                            border: Border.all(
-                                                              color:
-                                                                  Colors.white,
-                                                              width: 2,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      );
-                                                    }),
-                                                  // Show pending checkpoint if applicable
-                                                  if (_isPendingCheckpointCreation &&
-                                                      _pendingCheckpointDistance !=
-                                                          null)
-                                                    ..._getPendingCheckpointMarker(),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-
-              // Elevation chart
-              Container(
-                height: 200,
-                padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 16.0),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Calculate even 200m intervals for elevation ticks
-                    double minElevRounded =
-                        max(minElevation! / 200.floor() * 200, 0);
-                    double maxElevRounded = maxElevation! / 200.ceil() * 200;
-
-                    // Define chart are constants
-
-                    return GestureDetector(
-                      onTapUp: (details) => _handleElevationChartTap(
-                          details.localPosition, constraints),
-                      child: MouseRegion(
-                        cursor: hoveredDistance != null
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.basic,
-                        onHover: (event) {
-                          if (elevationPoints.isEmpty) return;
-
-                          // Safely access the render box
-                          final RenderBox? box =
-                              context.findRenderObject() as RenderBox?;
-                          if (box == null) return;
-
-                          try {
-                            final localPosition =
-                                box.globalToLocal(event.position);
-
-                            // Calculate distance based on x position relative to chart width
-                            // Get the actual chart dimensions from the constraints
-                            final double totalWidth = constraints.maxWidth;
-
-                            // Define clear left and right offsets
-                            const double leftOffset =
-                                56; // Left padding + axis labels
-                            const double rightOffset = 0; // Right padding
-                            final double chartAreaWidth =
-                                totalWidth - leftOffset - rightOffset;
-
-                            // Calculate how far along the chart the mouse is (0.0 to 1.0)
-                            double normalizedX =
-                                (localPosition.dx - leftOffset) /
-                                    chartAreaWidth;
-
-                            // Apply boundary constraints to prevent edge artifacts
-                            normalizedX = normalizedX.clamp(0.0, 1.0);
-
-                            // Convert to actual distance in km
-                            final double hoverDistance =
-                                normalizedX * elevationPoints.last.x;
-
-                            // Find closest point on elevation chart
-                            final FlSpot hoveredPoint =
-                                findClosestElevationPoint(hoverDistance);
-                            final int elevationIndex =
-                                _closestElevationPointIndex;
-
-                            if (elevationIndex < 0) return;
-
-                            // Find corresponding route point for map marker
-                            int routePointIndex =
-                                _findRoutePointIndexForDistance(hoveredPoint.x);
-
-                            if (routePointIndex < 0 ||
-                                routePointIndex >= routePoints.length) return;
-
-                            // Update all state variables in a single setState call
-                            if (mounted) {
-                              setState(() {
-                                hoveredPointIndex = routePointIndex;
-                                hoveredDistance = hoveredPoint.x;
-                                hoveredSpot = hoveredPoint;
-                              });
-                            }
-                          } catch (e) {
-                            // Silently handle any errors during hover handling
-                          }
-                        },
-                        onExit: (_) {
-                          // Clear hover state when mouse leaves chart
-                          if (mounted) {
-                            setState(() {
-                              hoveredPointIndex = null;
-                              hoveredDistance = null;
-                              hoveredSpot = null;
-                              _closestElevationPointIndex = -1;
-                            });
-                          }
-                        },
-                        child: LineChart(
-                          LineChartData(
-                            gridData: FlGridData(
-                              show: true,
-                              drawVerticalLine:
-                                  false, // Already set correctly to hide vertical lines
-                              horizontalInterval:
-                                  200, // Match the elevation intervals (200m)
-                              getDrawingHorizontalLine: (value) => FlLine(
-                                color: Colors.grey.shade300,
-                                strokeWidth: 1,
-                                dashArray:
-                                    null, // Setting to null makes the line solid (not dashed)
-                              ),
-                            ),
-                            borderData: FlBorderData(
-                              show: true,
-                              border: Border.all(
-                                color: Colors
-                                    .grey.shade300, // Match the gridline color
-                                width: 1,
-                              ),
-                            ),
-                            titlesData: FlTitlesData(
-                              bottomTitles: AxisTitles(
-                                axisNameWidget: Padding(
-                                  padding: const EdgeInsets.only(top: 12.0),
-                                  child: Text(
-                                    'Distance ($distanceUnitLabel)',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                sideTitles: SideTitles(
-                                  showTitles: true,
-                                  reservedSize: 30,
-                                  interval: (elevationPoints.last.x / 10)
-                                      .clamp(1, double.infinity),
-                                  getTitlesWidget: (value, meta) {
-                                    return Text(
-                                      convertDistanceToDisplay(value).toStringAsFixed(
-                                          value < 1 ? 1 : 0),
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              leftTitles: AxisTitles(
-                                // Remove the axis name widget
-                                axisNameWidget: const SizedBox.shrink(),
-                                sideTitles: SideTitles(
-                                  showTitles: true,
-                                  reservedSize: 40,
-                                  interval: useImperialUnits ? 650 : 200,
-                                  getTitlesWidget: (value, meta) {
-                                    // Only show labels at even intervals for the selected elevation unit
-                                    double intervalValue = useImperialUnits ? 650.0 : 200.0;
-                                    if ((value % intervalValue) > 0.001) {
-                                      return Container();
-                                    }
-                                    return Padding(
-                                      padding:
-                                          const EdgeInsets.only(right: 8.0),
-                                      child: Text(
-                                        convertElevationToDisplay(value).toStringAsFixed(
-                                            useImperialUnits ? 0 : 0),
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                              rightTitles: const AxisTitles(
-                                sideTitles: SideTitles(showTitles: false),
-                              ),
-                              topTitles: const AxisTitles(
-                                sideTitles: SideTitles(showTitles: false),
-                              ),
-                            ),
-                            lineBarsData: [
-                              LineChartBarData(
-                                spots: elevationPoints,
-                                isCurved: true,
-                                gradient: LinearGradient(
-                                  colors: List.generate(
-                                    smoothedGradients.length,
-                                    (i) =>
-                                        getGradientColor(smoothedGradients[i]),
-                                  ),
-                                  stops: List.generate(
-                                    smoothedGradients.length,
-                                    (i) =>
-                                        elevationPoints[i].x /
-                                        elevationPoints.last.x,
-                                  ),
-                                  begin: Alignment.centerLeft,
-                                  end: Alignment.centerRight,
-                                ),
-                                barWidth: 2,
-                                dotData: FlDotData(
-                                  show: true,
-                                  checkToShowDot: (spot, barData) {
-                                    // Show dot for the hovered spot
-                                    if (hoveredSpot != null &&
-                                        (spot.x - hoveredSpot!.x).abs() <
-                                            0.05 &&
-                                        spot.y == hoveredSpot!.y) {
-                                      return true;
-                                    }
-
-                                    // Show dots for checkpoints
-                                    if (showCheckpoints) {
-                                      for (var checkpoint in checkpoints) {
-                                        // Find the closest elevation point to this checkpoint
-                                        FlSpot elevSpot =
-                                            findClosestElevationPoint(
-                                                checkpoint.distance);
-                                        if ((spot.x - elevSpot.x).abs() <
-                                                0.05 &&
-                                            spot.y == elevSpot.y) {
-                                          return true;
-                                        }
-                                      }
-                                    }
-
-                                    return false;
-                                  },
-                                  getDotPainter:
-                                      (spot, percent, barData, index) {
-                                    // Check if this is a checkpoint dot
-                                    bool isCheckpoint = false;
-                                    if (showCheckpoints) {
-                                      for (var checkpoint in checkpoints) {
-                                        FlSpot elevSpot =
-                                            findClosestElevationPoint(
-                                                checkpoint.distance);
-                                        if ((spot.x - elevSpot.x).abs() <
-                                                0.05 &&
-                                            spot.y == elevSpot.y) {
-                                          isCheckpoint = true;
-                                          break;
-                                        }
-                                      }
-                                    }
-
-                                    // Use red for checkpoints, blue for hovered spot
-                                    return FlDotCirclePainter(
-                                      radius: isCheckpoint ? 6 : 6,
-                                      color: isCheckpoint
-                                          ? Colors.red
-                                          : Colors.blue,
-                                      strokeWidth: 2,
-                                      strokeColor: Colors.white,
-                                    );
-                                  },
-                                ),
-                                belowBarData: BarAreaData(
-                                  show: true,
-                                  gradient: LinearGradient(
-                                    colors: List.generate(
-                                      smoothedGradients.length,
-                                      (i) =>
-                                          getGradientColor(smoothedGradients[i])
-                                              .withOpacity(0.2),
-                                    ),
-                                    stops: List.generate(
-                                      smoothedGradients.length,
-                                      (i) =>
-                                          elevationPoints[i].x /
-                                          elevationPoints.last.x,
-                                    ),
-                                    begin: Alignment.centerLeft,
-                                    end: Alignment.centerRight,
-                                  ),
-                                ),
-                              ),
-                            ],
-                            minY:
-                                minElevRounded, // Use rounded value for even intervals
-                            maxY:
-                                maxElevRounded, // Use rounded value for even intervals
-                            minX: 0,
-                            maxX: elevationPoints.last.x,
-                            lineTouchData: const LineTouchData(
-                              enabled:
-                                  false, // Disable built-in hover interactions
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-              // Route Summary Section with bar charts
-              if (routePoints.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  final mapAndElevation = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Section title
-                      Text(
-                        'Route Summary',
-                        style:
-                            Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
+                      if (routeLayoutMode == RouteLayoutMode.medium) ...[
+                        paceControls,
+                        const SizedBox(height: 8),
+                      ],
+                      // Map toggle button
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16.0, vertical: 6.0),
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              showMap = !showMap;
+                            });
+                          },
+                          icon: Icon(
+                              showMap ? Icons.visibility_off : Icons.visibility),
+                          label: Text(showMap ? 'Hide Map' : 'Show Map'),
+                        ),
                       ),
-                      const SizedBox(height: 16),
+                      // Map container
+                      if (showMap)
+                        SizedBox(
+                          height: 360,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final screenWidth = constraints.maxWidth;
+                              final double horizontalPadding =
+                                  screenWidth > 600 ? 40.0 : 0.0;
+                              final double containerWidth =
+                                  screenWidth - (horizontalPadding * 2);
 
-                      // Total statistics
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Use Wrap for responsive layout
-                          return Wrap(
-                            spacing: 8.0, // Horizontal spacing between cards
-                            runSpacing: 8.0, // Vertical spacing between rows
-                            alignment: WrapAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Total Distance',
-                                  elevationPoints.isNotEmpty
-                                      ? formatDistanceValue(elevationPoints.last.x)
-                                      : '0 $distanceUnitLabel',
-                                  Icons.straighten,
-                                  Colors.blue,
-                                ),
-                              ),
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Grade Adj. Distance',
-                                  checkpoints.isNotEmpty
-                                      ? formatDistanceValue(
-                                          checkpoints.last.cumulativeGradeAdjustedDistance)
-                                      : '0 $distanceUnitLabel',
-                                  Icons.terrain,
-                                  Colors.purple,
-                                ),
-                              ),
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Elevation Gain',
-                                  cumulativeElevationGain.isNotEmpty
-                                      ? formatElevationValue(
-                                          cumulativeElevationGain.last)
-                                      : '0 $elevationUnitLabel',
-                                  Icons.trending_up,
-                                  Colors.green,
-                                ),
-                              ),
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Elevation Loss',
-                                  cumulativeElevationLoss.isNotEmpty
-                                      ? formatElevationValue(
-                                          cumulativeElevationLoss.last)
-                                      : '0 $elevationUnitLabel',
-                                  Icons.trending_down,
-                                  Colors.red,
-                                ),
-                              ),
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Estimated Time',
-                                  timePoints.isNotEmpty
-                                      ? _formatTotalTime(
-                                        _estimatedTotalTimeMinutes)
-                                      : '0m',
-                                  Icons.timer,
-                                  Colors.orange,
-                                ),
-                              ),
-                              SizedBox(
-                                width: constraints.maxWidth > 800
-                                    ? (constraints.maxWidth - 40) / 6
-                                    : (constraints.maxWidth - 8) / 2,
-                                child: _buildStatCard(
-                                  'Average Pace',
-                                  timePoints.isNotEmpty
-                                      ? '${formatPaceAxisLabel((timePoints.last.y * 60) / elevationPoints.last.x)} min/$distanceUnitLabel'
-                                      : '0 min/$distanceUnitLabel',
-                                  Icons.speed,
-                                  Colors.cyan,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                              return Center(
+                                child: Container(
+                                  width: containerWidth,
+                                  decoration: BoxDecoration(
+                                    border: screenWidth > 600
+                                        ? Border.all(
+                                            color: Colors.grey.shade300, width: 1)
+                                        : null,
+                                    borderRadius: screenWidth > 600
+                                        ? BorderRadius.circular(8)
+                                        : null,
+                                  ),
+                                  child: Stack(
+                                    children: [
+                                      LayoutBuilder(
+                                        builder: (context, mapConstraints) {
+                                          return MouseRegion(
+                                            cursor: hoveredDistance != null
+                                                ? SystemMouseCursors.click
+                                                : SystemMouseCursors.basic,
+                                            onHover: (event) {
+                                              if (_mapDebounceTimer?.isActive ?? false) return;
+                                              final RenderBox? box =
+                                                  context.findRenderObject() as RenderBox?;
+                                              if (box == null) return;
 
-                      // Bar charts
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Elevation distribution chart
-                          _buildBarChart(
-                            'Time at Elevation',
-                            calculateRouteSummaryData()['elevation'] ?? [],
-                            Colors.blue,
-                          ),
-                          const SizedBox(height: 12),
-                          // Gradient distribution chart
-                          _buildBarChart(
-                            'Time at Gradient',
-                            calculateRouteSummaryData()['gradient'] ?? [],
-                            Colors.red,
-                          ),
-                          const SizedBox(height: 12),
-                          // Pace distribution chart
-                          _buildBarChart(
-                            'Time at Pace (min/$distanceUnitLabel)',
-                            calculateRouteSummaryData()['pace'] ?? [],
-                            Colors.green,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                                              try {
+                                                final localPosition =
+                                                    box.globalToLocal(event.position);
+                                                final closestIndex =
+                                                    findClosestRoutePoint(
+                                                        localPosition,
+                                                        mapConstraints);
+                                                if (closestIndex >= 0 &&
+                                                    closestIndex < routePoints.length) {
+                                                  int elevationIndex;
+                                                  if (routePoints.length ==
+                                                      elevationPoints.length) {
+                                                    elevationIndex = closestIndex;
+                                                  } else {
+                                                    final double ratio =
+                                                        elevationPoints.length /
+                                                            routePoints.length;
+                                                    elevationIndex =
+                                                        (closestIndex * ratio).round();
+                                                    elevationIndex = elevationIndex.clamp(
+                                                        0,
+                                                        elevationPoints.length - 1,
+                                                    );
+                                                  }
 
-              // Checkpoint button and table
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Button to toggle checkpoint table
-                    ElevatedButton.icon(
-                      onPressed: () {
-                        setState(() {
-                          showCheckpoints = !showCheckpoints;
-                          if (showCheckpoints && checkpoints.isEmpty) {
-                            // Add a default 'Finish' checkpoint
-                            addDefaultFinishCheckpoint();
-                          }
-                        });
-                      },
-                      icon: Icon(showCheckpoints
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      label: Text(showCheckpoints
-                          ? 'Hide Checkpoints'
-                          : 'Add Checkpoints'),
-                    ),
-
-                    // Checkpoint table
-                    if (showCheckpoints) ...[
-                      const SizedBox(height: 16),
-
-                      // Export button
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          // Start time picker
-                          Expanded(
-                            child: Builder(
-                              builder: (context) {
-                                final screenWidth =
-                                    MediaQuery.of(context).size.width;
-                                final bool isWideScreen = screenWidth > 800;
-
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (!isWideScreen) ...[
-                                      // Start time row (only shown in narrow layout)
-                                      Wrap(
-                                        spacing: 8,
-                                        crossAxisAlignment:
-                                            WrapCrossAlignment.center,
-                                        children: [
-                                          const Text('Start Time: '),
-                                          TextButton(
-                                            onPressed: () async {
-                                              final TimeOfDay? time =
-                                                  await showTimePicker(
-                                                context: context,
-                                                initialTime: startTime ??
-                                                    TimeOfDay.now(),
-                                                builder: (BuildContext context,
-                                                    Widget? child) {
-                                                  return MediaQuery(
-                                                    data: MediaQuery.of(context)
-                                                        .copyWith(
-                                                      alwaysUse24HourFormat:
-                                                          true,
-                                                    ),
-                                                    child: child!,
+                                                  if (elevationIndex >= 0 &&
+                                                      elevationIndex <
+                                                          elevationPoints.length &&
+                                                      mounted) {
+                                                    setState(() {
+                                                      hoveredPointIndex = closestIndex;
+                                                      _closestElevationPointIndex =
+                                                          elevationIndex;
+                                                      hoveredDistance =
+                                                          elevationPoints[elevationIndex].x;
+                                                      hoveredSpot =
+                                                          elevationPoints[elevationIndex];
+                                                    });
+                                                  }
+                                                  _mapDebounceTimer = Timer(
+                                                    const Duration(milliseconds: 5),
+                                                    () {},
                                                   );
-                                                },
-                                              );
-                                              if (time != null && mounted) {
+                                                }
+                                              } catch (_) {}
+                                            },
+                                            onExit: (_) {
+                                              if (mounted) {
                                                 setState(() {
-                                                  startTime = time;
+                                                  hoveredPointIndex = null;
+                                                  hoveredDistance = null;
+                                                  hoveredSpot = null;
+                                                  _closestElevationPointIndex = -1;
                                                 });
                                               }
                                             },
-                                            child: Text(
-                                              startTime != null
-                                                  ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
-                                                  : 'Set Time',
+                                            child: FlutterMap(
+                                              mapController: mapController,
+                                              options: MapOptions(
+                                                onTap: (tapPosition, point) {
+                                                  _handleMapTap(point);
+                                                },
+                                                initialCameraFit: CameraFit.bounds(
+                                                  bounds: LatLngBounds.fromPoints(routePoints),
+                                                  padding: const EdgeInsets.all(20.0),
+                                                ),
+                                              ),
+                                              children: [
+                                                TileLayer(
+                                                  urlTemplate:
+                                                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                                  userAgentPackageName:
+                                                      'com.example.app',
+                                                  tileProvider:
+                                                      CancellableNetworkTileProvider(),
+                                                ),
+                                                PolylineLayer(
+                                                  polylines: [
+                                                    Polyline(
+                                                      points: routePoints,
+                                                      color: Colors.blue,
+                                                      strokeWidth: 3,
+                                                    ),
+                                                  ],
+                                                ),
+                                                if (hoveredPointIndex != null &&
+                                                    hoveredPointIndex! < routePoints.length)
+                                                  MarkerLayer(
+                                                    markers: [
+                                                      Marker(
+                                                        point: routePoints[hoveredPointIndex!],
+                                                        child: Container(
+                                                          width: 3,
+                                                          height: 3,
+                                                          decoration: BoxDecoration(
+                                                            color: Colors.blue,
+                                                            shape: BoxShape.circle,
+                                                            border: Border.all(
+                                                              color: Colors.white,
+                                                              width: 1,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                MarkerLayer(
+                                                  markers: [
+                                                    if (showCheckpoints)
+                                                      ...checkpoints.map((checkpoint) {
+                                                        final int routePointIndex =
+                                                            _findRoutePointIndexForDistance(
+                                                                checkpoint.distance);
+                                                        if (routePointIndex < 0 ||
+                                                            routePointIndex >= routePoints.length) {
+                                                          return Marker(
+                                                            point: const LatLng(0, 0),
+                                                            width: 0,
+                                                            height: 0,
+                                                            child: Container(),
+                                                          );
+                                                        }
+
+                                                        return Marker(
+                                                          point: routePoints[routePointIndex],
+                                                          child: Container(
+                                                            width: 3,
+                                                            height: 3,
+                                                            decoration: BoxDecoration(
+                                                              color: Colors.red.withOpacity(0.7),
+                                                              shape: BoxShape.circle,
+                                                              border: Border.all(
+                                                                color: Colors.white,
+                                                                width: 2,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        );
+                                                      }),
+                                                    if (_isPendingCheckpointCreation &&
+                                                        _pendingCheckpointDistance != null)
+                                                      ..._getPendingCheckpointMarker(),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  );
+
+                  final mapAndElevationChart = Container(
+                    height: 260,
+                    padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 16.0),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        double minElevRounded =
+                            max(minElevation! / 200.floor() * 200, 0);
+                        double maxElevRounded = maxElevation! / 200.ceil() * 200;
+
+                        return GestureDetector(
+                          onTapUp: (details) => _handleElevationChartTap(
+                              details.localPosition, constraints),
+                          child: MouseRegion(
+                            cursor: hoveredDistance != null
+                                ? SystemMouseCursors.click
+                                : SystemMouseCursors.basic,
+                            onHover: (event) {
+                              if (elevationPoints.isEmpty) return;
+                              final RenderBox? box =
+                                  context.findRenderObject() as RenderBox?;
+                              if (box == null) return;
+
+                              try {
+                                final localPosition = box.globalToLocal(event.position);
+                                const double leftOffset = 56;
+                                const double rightOffset = 0;
+                                final double chartAreaWidth =
+                                    constraints.maxWidth - leftOffset - rightOffset;
+                                double normalizedX =
+                                    (localPosition.dx - leftOffset) / chartAreaWidth;
+                                normalizedX = normalizedX.clamp(0.0, 1.0);
+
+                                final double hoverDistance =
+                                    normalizedX * elevationPoints.last.x;
+                                final FlSpot hoveredPoint =
+                                    findClosestElevationPoint(hoverDistance);
+                                final int elevationIndex = _closestElevationPointIndex;
+
+                                if (elevationIndex < 0) return;
+
+                                int routePointIndex =
+                                    _findRoutePointIndexForDistance(hoveredPoint.x);
+
+                                if (routePointIndex < 0 ||
+                                    routePointIndex >= routePoints.length) return;
+
+                                if (mounted) {
+                                  setState(() {
+                                    hoveredPointIndex = routePointIndex;
+                                    hoveredDistance = hoveredPoint.x;
+                                    hoveredSpot = hoveredPoint;
+                                  });
+                                }
+                              } catch (_) {}
+                            },
+                            onExit: (_) {
+                              if (mounted) {
+                                setState(() {
+                                  hoveredPointIndex = null;
+                                  hoveredDistance = null;
+                                  hoveredSpot = null;
+                                  _closestElevationPointIndex = -1;
+                                });
+                              }
+                            },
+                            child: LineChart(
+                              LineChartData(
+                                gridData: FlGridData(
+                                  show: true,
+                                  drawVerticalLine: false,
+                                  horizontalInterval: 200,
+                                  getDrawingHorizontalLine: (value) => FlLine(
+                                    color: Colors.grey.shade300,
+                                    strokeWidth: 1,
+                                  ),
+                                ),
+                                borderData: FlBorderData(
+                                  show: true,
+                                  border: Border.all(
+                                    color: Colors.grey.shade300,
+                                    width: 1,
+                                  ),
+                                ),
+                                titlesData: FlTitlesData(
+                                  bottomTitles: AxisTitles(
+                                    axisNameWidget: Padding(
+                                      padding: const EdgeInsets.only(top: 12.0),
+                                      child: Text(
+                                        'Distance ($distanceUnitLabel)',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 30,
+                                      interval: (elevationPoints.last.x / 10)
+                                          .clamp(1, double.infinity),
+                                      getTitlesWidget: (value, meta) {
+                                        return Text(
+                                          convertDistanceToDisplay(value).toStringAsFixed(
+                                              value < 1 ? 1 : 0),
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  leftTitles: AxisTitles(
+                                    axisNameWidget: const SizedBox.shrink(),
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 40,
+                                      interval: useImperialUnits ? 650 : 200,
+                                      getTitlesWidget: (value, meta) {
+                                        final double intervalValue =
+                                            useImperialUnits ? 650.0 : 200.0;
+                                        if ((value % intervalValue) > 0.001) {
+                                          return Container();
+                                        }
+                                        return Padding(
+                                          padding: const EdgeInsets.only(right: 8.0),
+                                          child: Text(
+                                            convertElevationToDisplay(value).toStringAsFixed(0),
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
                                             ),
                                           ),
-                                        ],
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  rightTitles: const AxisTitles(
+                                    sideTitles: SideTitles(showTitles: false),
+                                  ),
+                                  topTitles: const AxisTitles(
+                                    sideTitles: SideTitles(showTitles: false),
+                                  ),
+                                ),
+                                lineBarsData: [
+                                  LineChartBarData(
+                                    spots: elevationPoints,
+                                    isCurved: true,
+                                    gradient: LinearGradient(
+                                      colors: List.generate(
+                                        smoothedGradients.length,
+                                        (i) => getGradientColor(smoothedGradients[i]),
                                       ),
-                                      const SizedBox(height: 8),
-                                    ],
+                                      stops: List.generate(
+                                        smoothedGradients.length,
+                                        (i) => elevationPoints[i].x / elevationPoints.last.x,
+                                      ),
+                                      begin: Alignment.centerLeft,
+                                      end: Alignment.centerRight,
+                                    ),
+                                    barWidth: 2,
+                                    dotData: FlDotData(
+                                      show: true,
+                                      checkToShowDot: (spot, barData) {
+                                        if (hoveredSpot != null &&
+                                            (spot.x - hoveredSpot!.x).abs() < 0.05 &&
+                                            spot.y == hoveredSpot!.y) {
+                                          return true;
+                                        }
 
-                                    // Main controls row
-                                    Wrap(
-                                      spacing: 16,
-                                      runSpacing: 8,
-                                      crossAxisAlignment:
-                                          WrapCrossAlignment.center,
+                                        if (showCheckpoints) {
+                                          for (var checkpoint in checkpoints) {
+                                            final FlSpot elevSpot =
+                                                findClosestElevationPoint(
+                                                    checkpoint.distance);
+                                            if ((spot.x - elevSpot.x).abs() < 0.05 &&
+                                                spot.y == elevSpot.y) {
+                                              return true;
+                                            }
+                                          }
+                                        }
+                                        return false;
+                                      },
+                                      getDotPainter: (spot, percent, barData, index) {
+                                        bool isCheckpoint = false;
+                                        if (showCheckpoints) {
+                                          for (var checkpoint in checkpoints) {
+                                            final FlSpot elevSpot =
+                                                findClosestElevationPoint(
+                                                    checkpoint.distance);
+                                            if ((spot.x - elevSpot.x).abs() < 0.05 &&
+                                                spot.y == elevSpot.y) {
+                                              isCheckpoint = true;
+                                              break;
+                                            }
+                                          }
+                                        }
+
+                                        return FlDotCirclePainter(
+                                          radius: 6,
+                                          color: isCheckpoint ? Colors.red : Colors.blue,
+                                          strokeWidth: 2,
+                                          strokeColor: Colors.white,
+                                        );
+                                      },
+                                    ),
+                                    belowBarData: BarAreaData(
+                                      show: true,
+                                      gradient: LinearGradient(
+                                        colors: List.generate(
+                                          smoothedGradients.length,
+                                          (i) => getGradientColor(smoothedGradients[i])
+                                              .withOpacity(0.2),
+                                        ),
+                                        stops: List.generate(
+                                          smoothedGradients.length,
+                                          (i) => elevationPoints[i].x / elevationPoints.last.x,
+                                        ),
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                minY: minElevRounded,
+                                maxY: maxElevRounded,
+                                minX: 0,
+                                maxX: elevationPoints.last.x,
+                                lineTouchData: const LineTouchData(enabled: false),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+
+                  final histograms = Padding(
+                    padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Route Summary',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            return Wrap(
+                              spacing: 8.0,
+                              runSpacing: 8.0,
+                              alignment: WrapAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Total Distance',
+                                    elevationPoints.isNotEmpty
+                                        ? formatDistanceValue(elevationPoints.last.x)
+                                        : '0 $distanceUnitLabel',
+                                    Icons.straighten,
+                                    Colors.blue,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Grade Adj. Distance',
+                                    checkpoints.isNotEmpty
+                                        ? formatDistanceValue(
+                                            checkpoints.last.cumulativeGradeAdjustedDistance)
+                                        : '0 $distanceUnitLabel',
+                                    Icons.terrain,
+                                    Colors.purple,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Elevation Gain',
+                                    cumulativeElevationGain.isNotEmpty
+                                        ? formatElevationValue(cumulativeElevationGain.last)
+                                        : '0 $elevationUnitLabel',
+                                    Icons.trending_up,
+                                    Colors.green,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Elevation Loss',
+                                    cumulativeElevationLoss.isNotEmpty
+                                        ? formatElevationValue(cumulativeElevationLoss.last)
+                                        : '0 $elevationUnitLabel',
+                                    Icons.trending_down,
+                                    Colors.red,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Estimated Time',
+                                    timePoints.isNotEmpty
+                                        ? _formatTotalTime(_estimatedTotalTimeMinutes)
+                                        : '0m',
+                                    Icons.timer,
+                                    Colors.orange,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: constraints.maxWidth > 800
+                                      ? (constraints.maxWidth - 40) / 6
+                                      : (constraints.maxWidth - 8) / 2,
+                                  child: _buildStatCard(
+                                    'Average Pace',
+                                    timePoints.isNotEmpty
+                                        ? '${formatPaceAxisLabel((timePoints.last.y * 60) / elevationPoints.last.x)} min/$distanceUnitLabel'
+                                        : '0 min/$distanceUnitLabel',
+                                    Icons.speed,
+                                    Colors.cyan,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildBarChart(
+                              'Time at Elevation',
+                              calculateRouteSummaryData()['elevation'] ?? [],
+                              Colors.blue,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildBarChart(
+                              'Time at Gradient',
+                              calculateRouteSummaryData()['gradient'] ?? [],
+                              Colors.red,
+                            ),
+                            const SizedBox(height: 12),
+                            _buildBarChart(
+                              'Time at Pace (min/$distanceUnitLabel)',
+                              calculateRouteSummaryData()['pace'] ?? [],
+                              Colors.green,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+
+                  final splitsTable = Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              showCheckpoints = !showCheckpoints;
+                              if (showCheckpoints && checkpoints.isEmpty) {
+                                addDefaultFinishCheckpoint();
+                              }
+                            });
+                          },
+                          icon: Icon(showCheckpoints ? Icons.visibility_off : Icons.visibility),
+                          label: Text(showCheckpoints ? 'Hide Checkpoints' : 'Add Checkpoints'),
+                        ),
+                        if (showCheckpoints) ...[
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                child: Builder(
+                                  builder: (context) {
+                                    final screenWidth = MediaQuery.of(context).size.width;
+                                    final bool isWideScreen = screenWidth > 800;
+
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        if (isWideScreen) ...[
-                                          // Start time (only shown in wide layout)
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
+                                        if (!isWideScreen) ...[
+                                          Wrap(
+                                            spacing: 8,
+                                            crossAxisAlignment: WrapCrossAlignment.center,
                                             children: [
                                               const Text('Start Time: '),
                                               TextButton(
                                                 onPressed: () async {
-                                                  final TimeOfDay? time =
-                                                      await showTimePicker(
+                                                  final TimeOfDay? time = await showTimePicker(
                                                     context: context,
-                                                    initialTime: startTime ??
-                                                        TimeOfDay.now(),
-                                                    builder:
-                                                        (BuildContext context,
-                                                            Widget? child) {
+                                                    initialTime: startTime ?? TimeOfDay.now(),
+                                                    builder: (BuildContext context, Widget? child) {
                                                       return MediaQuery(
-                                                        data: MediaQuery.of(
-                                                                context)
-                                                            .copyWith(
-                                                          alwaysUse24HourFormat:
-                                                              true,
+                                                        data: MediaQuery.of(context).copyWith(
+                                                          alwaysUse24HourFormat: true,
                                                         ),
                                                         child: child!,
                                                       );
@@ -2229,971 +2165,584 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
                                               ),
                                             ],
                                           ),
-                                        ],
-
-                                        // Linear Pacing Strategy Controls
-                                        const SizedBox(height: 16),
-                                        Row(
-                                          children: [
-                                            Checkbox(
-                                              value: useLinearPacing,
-                                              onChanged: (value) {
-                                                setState(() {
-                                                  useLinearPacing =
-                                                      value ?? false;
-                                                  _recalculatePacingAndCheckpoints();
-                                                });
-                                              },
-                                            ),
-                                            const Text(
-                                                'Linear Pacing Strategy'),
-                                          ],
-                                        ),
-                                        if (useLinearPacing) ...[
                                           const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(
-                                                child: Text(() {
-                                                  if (pacingVariationPercent ==
-                                                      0) {
-                                                    return 'Variation: 0% (uniform pace)';
-                                                  }
-
-                                                  double halfVariation =
-                                                      pacingVariationPercent
-                                                              .abs() /
-                                                          200.0;
-                                                  double startMultiplier,
-                                                      endMultiplier;
-
-                                                  if (pacingVariationPercent >
-                                                      0) {
-                                                    // Positive: slow down during race (start fast, end slow)
-                                                    startMultiplier =
-                                                        1.0 - halfVariation;
-                                                    endMultiplier =
-                                                        1.0 + halfVariation;
-                                                  } else {
-                                                    // Negative: speed up during race (start slow, end fast)
-                                                    startMultiplier =
-                                                        1.0 + halfVariation;
-                                                    endMultiplier =
-                                                        1.0 - halfVariation;
-                                                  }
-
-                                                  String startPace = formatPace(
-                                                      selectedPaceSeconds *
-                                                          startMultiplier);
-                                                  String endPace = formatPace(
-                                                      selectedPaceSeconds *
-                                                          endMultiplier);
-                                                  String direction =
-                                                      pacingVariationPercent > 0
-                                                          ? 'slowing down'
-                                                          : 'speeding up';
-
-                                                  return 'Variation: ${pacingVariationPercent.toStringAsFixed(0)}% ($direction: $startPace → $endPace)';
-                                                }()),
-                                              ),
-                                            ],
-                                          ),
-                                          Slider(
-                                            value: pacingVariationPercent,
-                                            min: -10.0,
-                                            max: 30.0,
-                                            divisions: 40,
-                                            label:
-                                                '${pacingVariationPercent.toStringAsFixed(0)}%',
-                                            onChanged: (value) {
-                                              setState(() {
-                                                pacingVariationPercent = value;
-                                                _recalculatePacingAndCheckpoints();
-                                              });
-                                            },
-                                          ),
                                         ],
-
-                                        // Reset manual adjustments button
-                                        const SizedBox(height: 16),
-                                        ElevatedButton.icon(
-                                          onPressed: () {
-                                            setState(() {
-                                              resetAllManualAdjustments();
-                                            });
-                                          },
-                                          icon: const Icon(Icons.refresh),
-                                          label: const Text(
-                                              'Reset Manual Adjustments'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                Colors.orange.shade100,
-                                            foregroundColor:
-                                                Colors.orange.shade800,
-                                          ),
-                                        ),
-
-                                        const SizedBox(height: 16),
-
-                                        // Carbs per hour control
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
+                                        Wrap(
+                                          spacing: 16,
+                                          runSpacing: 8,
+                                          crossAxisAlignment: WrapCrossAlignment.center,
                                           children: [
-                                            const Text('Carbs per hour: '),
-                                            SizedBox(
-                                              width: 45,
-                                              child: TextField(
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                decoration:
-                                                    const InputDecoration(
-                                                  hintText: '90',
-                                                  contentPadding:
-                                                      EdgeInsets.symmetric(
-                                                          horizontal: 8),
-                                                ),
-                                                onChanged: (value) {
-                                                  double? newValue =
-                                                      double.tryParse(value);
-                                                  if (newValue != null) {
-                                                    setState(() {
-                                                      carbsPerHour = newValue;
-                                                      calculateCarbsUnits();
-                                                    });
-                                                  }
-                                                },
+                                            if (isWideScreen)
+                                              Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Text('Start Time: '),
+                                                  TextButton(
+                                                    onPressed: () async {
+                                                      final TimeOfDay? time = await showTimePicker(
+                                                        context: context,
+                                                        initialTime: startTime ?? TimeOfDay.now(),
+                                                        builder: (BuildContext context, Widget? child) {
+                                                          return MediaQuery(
+                                                            data: MediaQuery.of(context).copyWith(
+                                                              alwaysUse24HourFormat: true,
+                                                            ),
+                                                            child: child!,
+                                                          );
+                                                        },
+                                                      );
+                                                      if (time != null && mounted) {
+                                                        setState(() {
+                                                          startTime = time;
+                                                        });
+                                                      }
+                                                    },
+                                                    child: Text(
+                                                      startTime != null
+                                                          ? '${startTime!.hour.toString().padLeft(2, '0')}:${startTime!.minute.toString().padLeft(2, '0')}'
+                                                          : 'Set Time',
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
-                                            ),
-                                            const Text('g/hour'),
-                                          ],
-                                        ),
-
-                                        // Carb unit control
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const Text('Carb unit: '),
-                                            SizedBox(
-                                              width: 45,
-                                              child: TextField(
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                decoration:
-                                                    const InputDecoration(
-                                                  hintText: '45',
-                                                  contentPadding:
-                                                      EdgeInsets.symmetric(
-                                                          horizontal: 8),
-                                                ),
-                                                onChanged: (value) {
-                                                  double? newValue =
-                                                      double.tryParse(value);
-                                                  if (newValue != null) {
-                                                    setState(() {
-                                                      gramsPerUnit = newValue;
-                                                      calculateCarbsUnits();
-                                                    });
-                                                  }
-                                                },
-                                              ),
-                                            ),
-                                            const Text('g'),
-                                          ],
-                                        ),
-
-                                        // Fluid per hour control
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const Text('Fluid per hour: '),
-                                            SizedBox(
-                                              width: 45,
-                                              child: TextField(
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                decoration:
-                                                    const InputDecoration(
-                                                  hintText: '750',
-                                                  contentPadding:
-                                                      EdgeInsets.symmetric(
-                                                          horizontal: 8),
-                                                ),
-                                                onChanged: (value) {
-                                                  double? newValue =
-                                                      double.tryParse(value);
-                                                  if (newValue != null) {
-                                                    setState(() {
-                                                      fluidPerHour = newValue;
-                                                      calculateFluidUnits();
-                                                    });
-                                                  }
-                                                },
-                                              ),
-                                            ),
-                                            const Text('ml/h'),
-                                          ],
-                                        ),
-
-                                        // Fluid unit control
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const Text('Fluid unit: '),
-                                            SizedBox(
-                                              width: 45,
-                                              child: TextField(
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                decoration:
-                                                    const InputDecoration(
-                                                  hintText: '500',
-                                                  contentPadding:
-                                                      EdgeInsets.symmetric(
-                                                          horizontal: 8),
-                                                ),
-                                                onChanged: (value) {
-                                                  double? newValue =
-                                                      double.tryParse(value);
-                                                  if (newValue != null) {
-                                                    setState(() {
-                                                      mlPerUnit = newValue;
-                                                      calculateFluidUnits();
-                                                    });
-                                                  }
-                                                },
-                                              ),
-                                            ),
-                                            const Text('ml'),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // Wrap the table structure in a horizontal scroll view
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: ConstrainedBox(
-                          // Set a minimum width to ensure columns don't wrap and scrolling is enabled
-                          constraints: const BoxConstraints(minWidth: 1200),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Table header
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade200,
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(8),
-                                    topRight: Radius.circular(8),
-                                  ),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 12, horizontal: 8),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      // Name column
-                                      width: 120,
-                                      child: Text(
-                                        'Name',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Total Distance column
-                                      width: 110,
-                                      child: Text(
-                                        'Total Distance\n($distanceUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Segment Distance column
-                                      width: 110,
-                                      child: Text(
-                                        'Segment Dist.\n($distanceUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Segment Pace column
-                                      width: 110,
-                                      child: Text(
-                                        'Segment Pace\n(min/$distanceUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Grade Adj. Distance column
-                                      width: 110,
-                                      child: Text(
-                                        'Grade Adj. Dist.\n($distanceUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Elevation column
-                                      width: 110,
-                                      child: Text(
-                                        'Elevation\n($elevationUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Elev. Gain column
-                                      width: 110,
-                                      child: Text(
-                                        'Elev. Gain\n($elevationUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Elev. Loss column
-                                      width: 110,
-                                      child: Text(
-                                        'Elev. Loss\n($elevationUnitLabel)',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Total Time column
-                                      width: 100,
-                                      child: Text(
-                                        'Total Time',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      // Segment Time column
-                                      width: 100,
-                                      child: Text(
-                                        'Segment Time',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ),
-                                        SizedBox(
-                                          width: 100,
-                                          child: Text(
-                                            'Pause (s)',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleSmall
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                          ),
-                                        ),
-                                    if (carbsPerHour > 0 && gramsPerUnit > 0)
-                                      SizedBox(
-                                        // Carbs Units column
-                                        width: 100,
-                                        child: Text(
-                                          'Carb units',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                        ),
-                                      ),
-                                    if (fluidPerHour > 0 && mlPerUnit > 0)
-                                      SizedBox(
-                                        // Fluid Units column
-                                        width: 100,
-                                        child: Text(
-                                          'Fluid units',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                        ),
-                                      ),
-                                    // Add Real Time column if start time is set
-                                    if (startTime != null)
-                                      SizedBox(
-                                        // Real Time column
-                                        width: 100,
-                                        child: Text(
-                                          'Real Time',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleSmall
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                        ),
-                                      ),
-                                    const SizedBox(
-                                        width: 180), // Space for delete button
-                                  ],
-                                ),
-                              ),
-
-                              // Table rows - Replace ListView.builder with Column
-                              Container(
-                                decoration: BoxDecoration(
-                                  border:
-                                      Border.all(color: Colors.grey.shade300),
-                                  borderRadius: const BorderRadius.only(
-                                    bottomLeft: Radius.circular(8),
-                                    bottomRight: Radius.circular(8),
-                                  ),
-                                ),
-                                // Use a Column instead of ListView.builder
-                                child: Column(
-                                  children: List.generate(checkpoints.length,
-                                      (index) {
-                                    final checkpoint = checkpoints[index];
-                                    return Container(
-                                      decoration: BoxDecoration(
-                                        border: Border(
-                                          bottom: index < checkpoints.length - 1
-                                              ? BorderSide(
-                                                  color: Colors.grey.shade300)
-                                              : BorderSide.none,
-                                        ),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 8, horizontal: 8),
-                                      child: Row(
-                                        children: [
-                                          // Name field (editable)
-                                          SizedBox(
-                                            width: 120,
-                                            child: TextFormField(
-                                              key: ValueKey(
-                                                  'checkpoint_name_${checkpoint.id}'),
-                                              focusNode:
-                                                  index < _nameFocusNodes.length
-                                                      ? _nameFocusNodes[index]
-                                                      : null,
-                                              initialValue:
-                                                  checkpoint.name ?? '',
-                                              decoration: const InputDecoration(
-                                                isDense: true,
-                                                contentPadding:
-                                                    EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 8),
-                                                border: OutlineInputBorder(),
-                                                hintText: 'Enter name',
-                                              ),
-                                              onChanged: (value) {
-                                                setState(() {
-                                                  checkpoint.name = value;
-                                                });
-                                              },
-                                              onTap: () {
-                                                setState(() {
-                                                  _editingCheckpointId =
-                                                      checkpoint.id;
-                                                  _isEditingName = true;
-                                                });
-                                              },
-                                              onFieldSubmitted: (_) {
-                                                setState(() {
-                                                  _isEditingName = false;
-                                                  _editingCheckpointId = null;
-                                                });
-                                                _processCheckpointChanges();
-                                              },
-                                              onEditingComplete: () {
-                                                setState(() {
-                                                  _isEditingName = false;
-                                                  _editingCheckpointId = null;
-                                                });
-                                                _processCheckpointChanges();
-                                              },
-                                            ),
-                                          ),
-
-                                          // Total Distance (editable)
-                                          SizedBox(
-                                            width: 110,
-                                            child: TextFormField(
-                                              key: ValueKey(
-                                                  'checkpoint_${checkpoint.id}'),
-                                              focusNode: index <
-                                                      _distanceFocusNodes.length
-                                                  ? _distanceFocusNodes[index]
-                                                  : null,
-                                              initialValue:
-                                                  checkpoint.distance > 0
-                                                      ? convertDistanceToDisplay(
-                                                              checkpoint.distance)
-                                                          .toStringAsFixed(1)
-                                                      : '',
-                                              decoration: InputDecoration(
-                                                isDense: true,
-                                                contentPadding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 8),
-                                                border: const OutlineInputBorder(),
-                                                hintText: 'Enter $distanceUnitLabel',
-                                              ),
-                                              keyboardType: const TextInputType
-                                                  .numberWithOptions(
-                                                  decimal: true),
-                                              onChanged: (value) {
-                                                // Try to parse the value, but don't update if it's not a valid number
-                                                double? distance =
-                                                    double.tryParse(value);
-                                                if (distance != null) {
-                                                  updateCheckpointDistance(
-                                                      index,
-                                                      convertDistanceFromDisplay(
-                                                          distance));
-                                                }
-                                              },
-                                              onTap: () {
-                                                setState(() {
-                                                  _editingCheckpointId =
-                                                      checkpoint.id;
-                                                  _isEditingDistance = true;
-                                                });
-                                              },
-                                              onFieldSubmitted: (_) {
-                                                setState(() {
-                                                  _isEditingDistance = false;
-                                                  _editingCheckpointId = null;
-                                                });
-                                                _processCheckpointChanges();
-                                              },
-                                              onEditingComplete: () {
-                                                setState(() {
-                                                  _isEditingDistance = false;
-                                                  _editingCheckpointId = null;
-                                                });
-                                                _processCheckpointChanges();
-                                              },
-                                            ),
-                                          ),
-
-                                          // Segment Distance (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                convertDistanceToDisplay(
-                                                        _getSegmentDistance(index))
-                                                    .toStringAsFixed(1),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Segment Pace (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                _getSegmentPace(index),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Grade Adj. Distance (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                convertDistanceToDisplay(
-                                                        checkpoint
-                                                            .cumulativeGradeAdjustedDistance)
-                                                    .toStringAsFixed(1),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Elevation (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                convertElevationToDisplay(
-                                                        checkpoint.elevation)
-                                                    .toStringAsFixed(0),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Elevation Gain (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                convertElevationToDisplay(
-                                                        checkpoint.elevationGain)
-                                                    .toStringAsFixed(0),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Elevation Loss (read-only)
-                                          SizedBox(
-                                            width: 110,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                convertElevationToDisplay(
-                                                        checkpoint.elevationLoss)
-                                                    .toStringAsFixed(0),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Cumulative Time (read-only)
-                                          SizedBox(
-                                            width: 100,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                _formatTotalTime(
-                                                    checkpoint.cumulativeTime),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Time from Previous (read-only)
-                                          SizedBox(
-                                            width: 100,
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      horizontal: 8),
-                                              child: Text(
-                                                _formatTotalTime(checkpoint
-                                                    .timeFromPrevious),
-                                              ),
-                                            ),
-                                          ),
-
-                                          // Pause at checkpoint (seconds)
-                                          SizedBox(
-                                            width: 100,
-                                            child: TextFormField(
-                                              key: ValueKey(
-                                                  'checkpoint_pause_${checkpoint.id}'),
-                                              initialValue:
-                                                  checkpoint.pauseSeconds
-                                                      .toStringAsFixed(0),
-                                              decoration: const InputDecoration(
-                                                isDense: true,
-                                                contentPadding:
-                                                    EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 8),
-                                                border: OutlineInputBorder(),
-                                                suffixText: 's',
-                                              ),
-                                              keyboardType: const TextInputType
-                                                  .numberWithOptions(
-                                                  decimal: false),
-                                              onChanged: (value) {
-                                                final pause =
-                                                    double.tryParse(value);
-                                                if (pause != null) {
-                                                  updateCheckpointPause(
-                                                      index, pause);
-                                                }
-                                              },
-                                            ),
-                                          ),
-
-                                          if (carbsPerHour > 0 &&
-                                              gramsPerUnit > 0)
-                                            // Carbs Units (read-only)
-                                            SizedBox(
-                                              width: 100,
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8),
-                                                child: Text(
-                                                  '${checkpoint.legUnits} (${checkpoint.cumulativeUnits})',
-                                                  textAlign: TextAlign.center,
-                                                ),
-                                              ),
-                                            ),
-                                          if (fluidPerHour > 0 && mlPerUnit > 0)
-                                            // Fluid Units (read-only)
-                                            SizedBox(
-                                              width: 100,
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8),
-                                                child: Text(
-                                                  '${checkpoint.legFluidUnits} (${checkpoint.cumulativeFluidUnits})',
-                                                  textAlign: TextAlign.center,
-                                                ),
-                                              ),
-                                            ),
-
-                                          // Add Real Time column if start time is set
-                                          if (startTime != null)
-                                            SizedBox(
-                                              // Real Time column
-                                              width: 100,
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8),
-                                                child: Text(
-                                                  _formatRealTime(checkpoint
-                                                      .cumulativeTime),
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold),
-                                                ),
-                                              ),
-                                            ),
-
-                                          // Control buttons - adjust pace and delete
-                                          SizedBox(
-                                            // Actions column
-                                            width: 180,
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
+                                            const SizedBox(height: 16),
+                                            Wrap(
+                                              spacing: 16,
+                                              runSpacing: 8,
+                                              crossAxisAlignment: WrapCrossAlignment.center,
                                               children: [
-                                                // Adjustment factor controls
                                                 Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
+                                                  mainAxisSize: MainAxisSize.min,
                                                   children: [
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.remove,
-                                                          size: 20),
-                                                      onPressed: () {
-                                                        double newAdjustment =
-                                                            checkpoint
-                                                                    .adjustmentFactor -
-                                                                adjustmentIncrement;
-
-                                                        // Validate the adjustment is within limits
-                                                        if (newAdjustment >=
-                                                            -maxAdjustmentSeconds) {
-                                                          setState(() {
-                                                            checkpoint
-                                                                    .adjustmentFactor =
-                                                                newAdjustment;
-
-                                                            calculateTimePoints();
-
-                                                            // Redistribute time to maintain overall pace consistency
-                                                            redistributeAdjustmentTime(
-                                                                checkpoints.indexOf(
-                                                                    checkpoint),
-                                                                adjustmentIncrement);
-
-                                                            // Recalculate with redistribution applied
-                                                            calculateTimePoints();
-
-                                                            if (checkpoints
-                                                                .isNotEmpty) {
-                                                              _calculateCheckpointMetrics(
-                                                                  startIndex:
-                                                                      0);
-                                                            }
-                                                          });
-                                                        }
+                                                    Checkbox(
+                                                      value: useLinearPacing,
+                                                      onChanged: (value) {
+                                                        setState(() {
+                                                          useLinearPacing = value ?? false;
+                                                          _recalculatePacingAndCheckpoints();
+                                                        });
                                                       },
-                                                      padding: EdgeInsets.zero,
                                                     ),
-                                                    SizedBox(
-                                                      width: 60,
-                                                      child: Text(
-                                                        '${checkpoint.adjustmentFactor.toStringAsFixed(0)} s/${distanceUnitLabel}',
-                                                        textAlign:
-                                                            TextAlign.center,
-                                                      ),
-                                                    ),
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.add,
-                                                          size: 20),
-                                                      onPressed: () {
-                                                        double newAdjustment =
-                                                            checkpoint
-                                                                    .adjustmentFactor +
-                                                                adjustmentIncrement;
-
-                                                        // Validate the adjustment is within limits
-                                                        if (newAdjustment <=
-                                                            maxAdjustmentSeconds) {
-                                                          setState(() {
-                                                            checkpoint
-                                                                    .adjustmentFactor =
-                                                                newAdjustment;
-
-                                                            calculateTimePoints();
-
-                                                            // Redistribute time to maintain overall pace consistency
-                                                            redistributeAdjustmentTime(
-                                                                checkpoints.indexOf(
-                                                                    checkpoint),
-                                                                adjustmentIncrement);
-
-                                                            // Recalculate with redistribution applied
-                                                            calculateTimePoints();
-
-                                                            if (checkpoints
-                                                                .isNotEmpty) {
-                                                              _calculateCheckpointMetrics(
-                                                                  startIndex:
-                                                                      0);
-                                                            }
-                                                          });
-                                                        }
-                                                      },
-                                                      padding: EdgeInsets.zero,
-                                                    ),
+                                                    const Text('Linear Pacing Strategy'),
                                                   ],
                                                 ),
-                                                // Delete button
-                                                SizedBox(
-                                                  width: 40,
-                                                  child: IconButton(
-                                                    icon: const Icon(
-                                                        Icons.delete,
-                                                        size: 20),
-                                                    onPressed: () =>
-                                                        removeCheckpoint(index),
-                                                    color: Colors.red,
-                                                    padding: EdgeInsets.zero,
+                                                ElevatedButton.icon(
+                                                  onPressed: exportCheckpointsToExcel,
+                                                  icon: const Icon(Icons.download),
+                                                  label: const Text('Download Excel'),
+                                                ),
+                                                ElevatedButton.icon(
+                                                  onPressed: () {
+                                                    setState(() {
+                                                      resetAllManualAdjustments();
+                                                    });
+                                                  },
+                                                  icon: const Icon(Icons.refresh),
+                                                  label: const Text('Reset Pace Adjustments'),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: Colors.orange.shade100,
+                                                    foregroundColor: Colors.orange.shade800,
                                                   ),
                                                 ),
                                               ],
                                             ),
-                                          ),
-                                        ],
-                                      ),
+                                            if (useLinearPacing) ...[
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(() {
+                                                      if (pacingVariationPercent == 0) {
+                                                        return 'Variation: 0% (uniform pace)';
+                                                      }
+                                                      final double halfVariation =
+                                                          pacingVariationPercent.abs() / 200.0;
+                                                      double startMultiplier;
+                                                      double endMultiplier;
+                                                      if (pacingVariationPercent > 0) {
+                                                        startMultiplier = 1.0 - halfVariation;
+                                                        endMultiplier = 1.0 + halfVariation;
+                                                      } else {
+                                                        startMultiplier = 1.0 + halfVariation;
+                                                        endMultiplier = 1.0 - halfVariation;
+                                                      }
+                                                      final String startPace =
+                                                          formatPace(selectedPaceSeconds * startMultiplier);
+                                                      final String endPace =
+                                                          formatPace(selectedPaceSeconds * endMultiplier);
+                                                      final String direction =
+                                                          pacingVariationPercent > 0
+                                                              ? 'slowing down'
+                                                              : 'speeding up';
+                                                      return 'Variation: ${pacingVariationPercent.toStringAsFixed(0)}% ($direction: $startPace → $endPace)';
+                                                    }()),
+                                                  ),
+                                                ],
+                                              ),
+                                              Slider(
+                                                value: pacingVariationPercent,
+                                                min: -10.0,
+                                                max: 30.0,
+                                                divisions: 40,
+                                                label: '${pacingVariationPercent.toStringAsFixed(0)}%',
+                                                onChanged: (value) {
+                                                  setState(() {
+                                                    pacingVariationPercent = value;
+                                                    _recalculatePacingAndCheckpoints();
+                                                  });
+                                                },
+                                              ),
+                                            ],
+                                            const SizedBox(height: 8),
+                                            Wrap(
+                                              spacing: 16,
+                                              runSpacing: 8,
+                                              crossAxisAlignment: WrapCrossAlignment.center,
+                                              children: [
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Text('Carbs per hour: '),
+                                                    SizedBox(
+                                                      width: 45,
+                                                      child: TextField(
+                                                        keyboardType: TextInputType.number,
+                                                        decoration: const InputDecoration(
+                                                          hintText: '90',
+                                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                        ),
+                                                        onChanged: (value) {
+                                                          final double? newValue = double.tryParse(value);
+                                                          if (newValue != null) {
+                                                            setState(() {
+                                                              carbsPerHour = newValue;
+                                                              calculateCarbsUnits();
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const Text('g/hour'),
+                                                  ],
+                                                ),
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Text('Carb unit: '),
+                                                    SizedBox(
+                                                      width: 45,
+                                                      child: TextField(
+                                                        keyboardType: TextInputType.number,
+                                                        decoration: const InputDecoration(
+                                                          hintText: '45',
+                                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                        ),
+                                                        onChanged: (value) {
+                                                          final double? newValue = double.tryParse(value);
+                                                          if (newValue != null) {
+                                                            setState(() {
+                                                              gramsPerUnit = newValue;
+                                                              calculateCarbsUnits();
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const Text('g'),
+                                                  ],
+                                                ),
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Text('Fluid per hour: '),
+                                                    SizedBox(
+                                                      width: 45,
+                                                      child: TextField(
+                                                        keyboardType: TextInputType.number,
+                                                        decoration: const InputDecoration(
+                                                          hintText: '750',
+                                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                        ),
+                                                        onChanged: (value) {
+                                                          final double? newValue = double.tryParse(value);
+                                                          if (newValue != null) {
+                                                            setState(() {
+                                                              fluidPerHour = newValue;
+                                                              calculateFluidUnits();
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const Text('ml/h'),
+                                                  ],
+                                                ),
+                                                Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Text('Fluid unit: '),
+                                                    SizedBox(
+                                                      width: 45,
+                                                      child: TextField(
+                                                        keyboardType: TextInputType.number,
+                                                        decoration: const InputDecoration(
+                                                          hintText: '500',
+                                                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                                                        ),
+                                                        onChanged: (value) {
+                                                          final double? newValue = double.tryParse(value);
+                                                          if (newValue != null) {
+                                                            setState(() {
+                                                              mlPerUnit = newValue;
+                                                              calculateFluidUnits();
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const Text('ml'),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     );
-                                  }), // End of List.generate
-                                ), // End of Column
-                              ), // End of Container for rows
+                                  },
+                                ),
+                              ),
                             ],
-                          ), // End of inner Column
-                        ), // End of ConstrainedBox
-                      ), // End of SingleChildScrollView
-
-                      // Add checkpoint button
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            // Add a new checkpoint and immediately recalculate all metrics
-                            addCheckpoint();
-                            // Force a rebuild to ensure the UI reflects the updated values
-                            setState(() {});
-                          },
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add Checkpoint'),
-                        ),
-                      ),
-
-                      // Export to Excel and Reset buttons
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // Export to Excel button
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: ElevatedButton.icon(
-                              onPressed: checkpoints.isNotEmpty
-                                  ? exportCheckpointsToExcel
-                                  : null,
-                              icon: const Icon(Icons.file_download),
-                              label: const Text('Export to Excel'),
+                          ),
+                          const SizedBox(height: 8),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(minWidth: 1200),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade200,
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(8),
+                                        topRight: Radius.circular(8),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(width: 120, child: Text('Name', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Total Distance\n($distanceUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Segment Dist.\n($distanceUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Segment Pace\n(min/$distanceUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Grade Adj. Dist.\n($distanceUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Elevation\n($elevationUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Elev. Gain\n($elevationUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 110, child: Text('Elev. Loss\n($elevationUnitLabel)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 100, child: Text('Total Time', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 100, child: Text('Segment Time', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 100, child: Text('Pause (s)', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        SizedBox(width: 120, child: Text('Pace Adj.', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        if (carbsPerHour > 0 && gramsPerUnit > 0) SizedBox(width: 100, child: Text('Carb units', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        if (fluidPerHour > 0 && mlPerUnit > 0) SizedBox(width: 100, child: Text('Fluid units', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        if (startTime != null) SizedBox(width: 100, child: Text('Real Time', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold))),
+                                        const SizedBox(width: 180),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.grey.shade300),
+                                      borderRadius: const BorderRadius.only(
+                                        bottomLeft: Radius.circular(8),
+                                        bottomRight: Radius.circular(8),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      children: List.generate(checkpoints.length, (index) {
+                                        final checkpoint = checkpoints[index];
+                                        return Container(
+                                          decoration: BoxDecoration(
+                                            border: Border(
+                                              bottom: index < checkpoints.length - 1
+                                                  ? BorderSide(color: Colors.grey.shade300)
+                                                  : BorderSide.none,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                                          child: Row(
+                                            children: [
+                                              SizedBox(
+                                                width: 120,
+                                                child: TextFormField(
+                                                  key: ValueKey('checkpoint_name_${checkpoint.id}'),
+                                                  focusNode: index < _nameFocusNodes.length ? _nameFocusNodes[index] : null,
+                                                  initialValue: checkpoint.name ?? '',
+                                                  decoration: const InputDecoration(
+                                                    isDense: true,
+                                                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                    border: OutlineInputBorder(),
+                                                    hintText: 'Enter name',
+                                                  ),
+                                                  onChanged: (value) {
+                                                    setState(() {
+                                                      checkpoint.name = value;
+                                                    });
+                                                  },
+                                                  onTap: () {
+                                                    setState(() {
+                                                      _editingCheckpointId = checkpoint.id;
+                                                      _isEditingName = true;
+                                                    });
+                                                  },
+                                                  onFieldSubmitted: (_) {
+                                                    setState(() {
+                                                      _isEditingName = false;
+                                                      _editingCheckpointId = null;
+                                                    });
+                                                    _processCheckpointChanges();
+                                                  },
+                                                  onEditingComplete: () {
+                                                    setState(() {
+                                                      _isEditingName = false;
+                                                      _editingCheckpointId = null;
+                                                    });
+                                                    _processCheckpointChanges();
+                                                  },
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: TextFormField(
+                                                  key: ValueKey('checkpoint_${checkpoint.id}'),
+                                                  focusNode: index < _distanceFocusNodes.length ? _distanceFocusNodes[index] : null,
+                                                  initialValue: checkpoint.distance > 0
+                                                      ? convertDistanceToDisplay(checkpoint.distance).toStringAsFixed(1)
+                                                      : '',
+                                                  decoration: InputDecoration(
+                                                    isDense: true,
+                                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                                    border: const OutlineInputBorder(),
+                                                    hintText: 'Enter $distanceUnitLabel',
+                                                  ),
+                                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                                  onChanged: (value) {
+                                                    final double? distance = double.tryParse(value);
+                                                    if (distance != null) {
+                                                      updateCheckpointDistance(
+                                                        index,
+                                                        convertDistanceFromDisplay(distance),
+                                                      );
+                                                    }
+                                                  },
+                                                  onTap: () {
+                                                    setState(() {
+                                                      _editingCheckpointId = checkpoint.id;
+                                                      _isEditingDistance = true;
+                                                    });
+                                                  },
+                                                  onFieldSubmitted: (_) {
+                                                    setState(() {
+                                                      _isEditingDistance = false;
+                                                      _editingCheckpointId = null;
+                                                    });
+                                                    _processCheckpointChanges();
+                                                  },
+                                                  onEditingComplete: () {
+                                                    setState(() {
+                                                      _isEditingDistance = false;
+                                                      _editingCheckpointId = null;
+                                                    });
+                                                    _processCheckpointChanges();
+                                                  },
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    convertDistanceToDisplay(_getSegmentDistance(index)).toStringAsFixed(1),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(_getSegmentPace(index)),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    convertDistanceToDisplay(
+                                                            checkpoint.gradeAdjustedDistance)
+                                                        .toStringAsFixed(1),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    convertElevationToDisplay(
+                                                            checkpoint.elevation)
+                                                        .toStringAsFixed(0),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    convertElevationToDisplay(
+                                                            checkpoint.elevationGain)
+                                                        .toStringAsFixed(0),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 110,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    convertElevationToDisplay(
+                                                            checkpoint.elevationLoss)
+                                                        .toStringAsFixed(0),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 100,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    _formatClockTime(checkpoint.cumulativeTime),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 100,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Text(
+                                                    _formatClockTime(checkpoint.timeFromPrevious),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 100,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: TextFormField(
+                                                    initialValue: checkpoint.pauseSeconds.toStringAsFixed(0),
+                                                    keyboardType: const TextInputType.numberWithOptions(decimal: false),
+                                                    textAlign: TextAlign.center,
+                                                    decoration: const InputDecoration(
+                                                      isDense: true,
+                                                      contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                                      border: OutlineInputBorder(),
+                                                    ),
+                                                    onChanged: (value) {
+                                                      final parsed = double.tryParse(value);
+                                                      final safeValue = parsed == null || parsed < 0 ? 0.0 : parsed;
+                                                      _adjustPauseTime(index, safeValue);
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 150,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      IconButton(
+                                                        visualDensity: VisualDensity.compact,
+                                                        onPressed: () => _adjustSegmentPace(index, -1),
+                                                        icon: const Icon(Icons.remove),
+                                                      ),
+                                                      Flexible(
+                                                        child: FittedBox(
+                                                          fit: BoxFit.scaleDown,
+                                                          child: Text(
+                                                            '${checkpoint.adjustmentFactor.round()}s',
+                                                            textAlign: TextAlign.center,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      IconButton(
+                                                        visualDensity: VisualDensity.compact,
+                                                        onPressed: () => _adjustSegmentPace(index, 1),
+                                                        icon: const Icon(Icons.add),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                              if (carbsPerHour > 0 && gramsPerUnit > 0)
+                                                SizedBox(
+                                                  width: 100,
+                                                  child: Padding(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                    child: Text(checkpoint.legUnits.toString()),
+                                                  ),
+                                                ),
+                                              if (fluidPerHour > 0 && mlPerUnit > 0)
+                                                SizedBox(
+                                                  width: 100,
+                                                  child: Padding(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                    child: Text(checkpoint.legFluidUnits.toString()),
+                                                  ),
+                                                ),
+                                              if (startTime != null)
+                                                SizedBox(
+                                                  width: 100,
+                                                  child: Padding(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                    child: Text(
+                                                      _formatRealTime(checkpoint.cumulativeTime),
+                                                    ),
+                                                  ),
+                                                ),
+                                              const SizedBox(width: 180),
+                                            ],
+                                          ),
+                                        );
+                                      }),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ],
-                      ),
-                    ],
-                  ],
-                ),
+                      ],
+                    ),
+                  );
+
+                  return ResponsiveRouteAnalysisLayout(
+                    layoutMode: routeLayoutMode,
+                    mapAndElevation: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        mapAndElevation,
+                        mapAndElevationChart,
+                      ],
+                    ),
+                    histograms: histograms,
+                    splitsTable: splitsTable,
+                  );
+                },
               ),
             ],
           ],
@@ -3212,6 +2761,15 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       return '${hours}h ${minutes}m ${seconds}s';
     }
     return '${minutes}m ${seconds}s';
+  }
+
+  String _formatClockTime(double totalMinutes) {
+    final totalSeconds = (totalMinutes * 60).round();
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   double get _estimatedTotalTimeMinutes {
@@ -3405,6 +2963,91 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
     setState(() {
       checkpoints[index].distance = newDistance;
     });
+  }
+
+  double _segmentDistanceInKm(int checkpointIndex) {
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) return 0;
+    if (checkpointIndex == 0) {
+      return checkpoints[0].distance / 1000.0;
+    }
+    return (checkpoints[checkpointIndex].distance -
+            checkpoints[checkpointIndex - 1].distance) /
+        1000.0;
+  }
+
+  void _applyTimeBalanceToOtherSegments(
+    int changedCheckpointIndex, {
+    double paceDeltaSecondsPerKm = 0,
+    double pauseDeltaSeconds = 0,
+  }) {
+    if (checkpoints.length < 2) return;
+
+    double timeDeltaSeconds = 0;
+    if (paceDeltaSecondsPerKm != 0) {
+      final double segmentDistanceKm = _segmentDistanceInKm(changedCheckpointIndex);
+      timeDeltaSeconds += paceDeltaSecondsPerKm * segmentDistanceKm;
+    }
+    if (pauseDeltaSeconds != 0) {
+      timeDeltaSeconds += pauseDeltaSeconds;
+    }
+
+    if (timeDeltaSeconds.abs() < 0.001) return;
+
+    double totalOtherDistanceKm = 0.0;
+    for (int i = 0; i < checkpoints.length; i++) {
+      if (i != changedCheckpointIndex) {
+        totalOtherDistanceKm += _segmentDistanceInKm(i);
+      }
+    }
+
+    if (totalOtherDistanceKm <= 0) return;
+
+    final double compensationPerKm = -(timeDeltaSeconds / totalOtherDistanceKm);
+
+    for (int i = 0; i < checkpoints.length; i++) {
+      if (i == changedCheckpointIndex) continue;
+      final double current = checkpoints[i].adjustmentFactor;
+      checkpoints[i].adjustmentFactor =
+          (current + compensationPerKm).clamp(
+        -RouteAnalyzerScreen.maxAdjustmentSeconds,
+        RouteAnalyzerScreen.maxAdjustmentSeconds,
+      );
+    }
+  }
+
+  void _adjustSegmentPace(int checkpointIndex, int stepCount) {
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) return;
+
+    final double delta = stepCount * paceAdjustmentStep;
+    final double currentAdjustment = checkpoints[checkpointIndex].adjustmentFactor;
+    final double nextAdjustment = (currentAdjustment + delta).clamp(
+      -RouteAnalyzerScreen.maxAdjustmentSeconds,
+      RouteAnalyzerScreen.maxAdjustmentSeconds,
+    );
+
+    setState(() {
+      checkpoints[checkpointIndex].adjustmentFactor = nextAdjustment;
+      _applyTimeBalanceToOtherSegments(
+        checkpointIndex,
+        paceDeltaSecondsPerKm: delta,
+      );
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+
+    _recalculatePacingAndCheckpoints();
+  }
+
+  void _adjustPauseTime(int checkpointIndex, double newPauseSeconds) {
+    if (checkpointIndex < 0 || checkpointIndex >= checkpoints.length) return;
+
+    final double clampedPause = max(0, newPauseSeconds);
+
+    setState(() {
+      checkpoints[checkpointIndex].pauseSeconds = clampedPause;
+      _calculateCheckpointMetrics(startIndex: 0);
+    });
+
+    _recalculatePacingAndCheckpoints();
   }
 
   void updateCheckpointPause(int index, double pauseSeconds) {
@@ -3944,23 +3587,37 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       return result;
     }
 
-    // Define custom elevation bins in the current display unit.
-    final double elevationBinBase = useImperialUnits ? 1000.0 : 200.0;
+    // Define custom elevation bins in the current display unit, keeping them
+    // readable and rounded while guaranteeing at least five buckets when data
+    // is sparse.
     final String elevationUnit = useImperialUnits ? 'ft' : 'm';
-    List<String> elevationLabels = [];
-    List<double> elevationBreakpoints = [0];
-
-    for (int i = 1; i <= 16; i++) {
-      double value = elevationBinBase * i;
-      elevationBreakpoints.add(value);
-      if (i < 16) {
-        elevationLabels.add(
-          '${elevationBreakpoints[i - 1].toStringAsFixed(0)}-${value.toStringAsFixed(0)}$elevationUnit');
+    final double minElevationDisplay = elevationPoints
+        .map((point) => convertElevationToDisplay(point.y))
+        .reduce(min);
+    final double maxElevationDisplay = elevationPoints
+        .map((point) => convertElevationToDisplay(point.y))
+        .reduce(max);
+    final List<double> elevationStepOptions = useImperialUnits
+        ? [1000.0, 500.0, 250.0, 100.0, 50.0, 25.0, 10.0]
+        : [200.0, 100.0, 50.0, 25.0, 10.0];
+    final List<double> elevationBreakpoints = RouteAnalyzerScreen.buildRoundedHistogramBoundaries(
+      minValue: minElevationDisplay,
+      maxValue: maxElevationDisplay,
+      stepOptions: elevationStepOptions,
+      minimumBins: 5,
+      forceZeroStart: true,
+    );
+    final List<String> elevationLabels = [];
+    for (int i = 0; i < elevationBreakpoints.length - 1; i++) {
+      final double start = elevationBreakpoints[i];
+      final double end = elevationBreakpoints[i + 1];
+      if (i == elevationBreakpoints.length - 2) {
+        elevationLabels.add('>${start.toStringAsFixed(0)}$elevationUnit');
       } else {
-        elevationLabels.add('>${value.toStringAsFixed(0)}$elevationUnit');
+        elevationLabels.add(
+          '${start.toStringAsFixed(0)}-${end.toStringAsFixed(0)}$elevationUnit');
       }
     }
-    elevationBreakpoints.add(double.infinity);
 
     // Define custom gradient bins
     List<String> gradientLabels = [
@@ -3994,47 +3651,22 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
       double.infinity
     ];
 
-    final paceBreakpoints = useImperialUnits
-        ? <double>[
-            0,
-            270,
-            300,
-            330,
-            360,
-            390,
-            420,
-            450,
-            480,
-            510,
-            540,
-            570,
-            600,
-            630,
-            660,
-            690,
-            720,
-            750,
-            780,
-            810,
-            840,
-            870,
-            900,
-            double.infinity,
-          ]
-        : <double>[
-            0,
-            180,
-            240,
-            300,
-            360,
-            420,
-            480,
-            540,
-            600,
-            660,
-            720,
-            double.infinity,
-          ];
+    final double minPaceDisplay = pacePoints
+        .map((point) => convertPaceToDisplayUnit(point.y))
+        .reduce(min);
+    final double maxPaceDisplay = pacePoints
+        .map((point) => convertPaceToDisplayUnit(point.y))
+        .reduce(max);
+    final List<double> paceStepOptions = useImperialUnits
+        ? [300.0, 180.0, 120.0, 60.0, 30.0, 15.0]
+        : [240.0, 180.0, 120.0, 60.0, 30.0, 15.0];
+    final List<double> paceBreakpoints = RouteAnalyzerScreen.buildRoundedHistogramBoundaries(
+      minValue: minPaceDisplay,
+      maxValue: maxPaceDisplay,
+      stepOptions: paceStepOptions,
+      minimumBins: 5,
+      forceZeroStart: false,
+    );
     final paceLabels = <String>[];
     String formatHistogramPace(double seconds) {
       final minutes = (seconds / 60).floor();
@@ -4482,7 +4114,7 @@ class _RouteAnalyzerScreenState extends State<RouteAnalyzerScreen> {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 250,
+          height: 160,
           child: LayoutBuilder(
             builder: (context, constraints) {
               // Calculate responsive bar width based on available width
